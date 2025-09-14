@@ -92,8 +92,8 @@ def _get_mtime(path: Optional[str]) -> Optional[float]:
 def _read_text_file(path: str, max_bytes: int = 8192) -> Optional[str]:
     try:
         with open(path, "r", encoding="utf-8", errors="replace") as fh:
-            data = fh.read(max_bytes)
-        return data.replace("\r\n", "\n").replace("\r", "\n").strip("\n")
+            line = fh.readline(max_bytes)
+        return line.rstrip("\r\n")
     except Exception as exc:  # noqa: BLE001
         logger.error("RT file read failed (%s): %s", path, exc)
         return None
@@ -112,11 +112,6 @@ def _center_fixed(s: str, width: int) -> str:
     left = (pad + 1) // 2
     right = pad - left
     return (" " * left) + s + (" " * right)
-
-
-def _normalize_rt_source(raw: str) -> str:
-    line = next((ln for ln in raw.split("\n") if ln.strip()), "")
-    return " ".join(line.split())
 
 
 def _ps_pairs(ps: List[str], center: bool) -> List[Tuple[str, int]]:
@@ -282,16 +277,12 @@ def _fmt_rt(s: str, center: bool) -> str:
 def _resolve_file_rt(cfg: AppConfig) -> Optional[str]:
     if not cfg.rds_rt_file:
         return None
-    mt = _get_mtime(cfg.rds_rt_file)
-    if mt is None:
-        return None
     raw = _read_text_file(cfg.rds_rt_file)
     if not raw:
         return None
-    norm = _normalize_rt_source(raw)
-    if any(sw in norm.lower() for sw in cfg.rds_rt_skip_words):
+    if any(sw in raw.lower() for sw in cfg.rds_rt_skip_words):
         return None
-    return _fmt_rt(norm, cfg.rds_rt_center)
+    return _fmt_rt(raw, cfg.rds_rt_center)
 
 
 def _resolve_rotation_rt(cfg: AppConfig, idx: int) -> Optional[str]:
@@ -499,7 +490,7 @@ def main() -> None:
     rt_source: str
     rot_idx: int
     next_rotate_at: float
-    file_mtime: Optional[float] = _get_mtime(cfg.rds_rt_file)
+    file_text: Optional[str]
 
     try:
         if not tx.init(RESET_PIN, REFCLK_HZ):
@@ -508,6 +499,7 @@ def main() -> None:
             sys.exit(1)
 
         last_rt, rt_source, rot_idx, next_rotate_at = apply_config(tx, cfg)
+        file_text = last_rt if rt_source == "file" else None
 
         if cfg.monitor_health:
             if tx.is_transmitting():
@@ -579,6 +571,7 @@ def main() -> None:
                         )
                         last_rt = candidate
                         rt_source = new_src
+                        file_text = candidate if new_src == "file" else None
 
                     next_rotate_at = time.monotonic() + max(0.5, cfg.rds_rt_speed_s)
             except Exception as exc:  # noqa: BLE001
@@ -587,43 +580,27 @@ def main() -> None:
             # RT file watcher
             if cfg.rds_rt_file:
                 current_mtime = _get_mtime(cfg.rds_rt_file)
-
-                if current_mtime is not None and current_mtime != file_mtime:
-                    candidate = _resolve_file_rt(cfg)
-                    if candidate is not None:
-                        if candidate != last_rt or rt_source != "file":
-                            _burst_rt(
-                                tx,
-                                candidate,
-                                ab_mode=cfg.rds_rt_ab_mode,
-                                repeats=cfg.rds_rt_repeats,
-                                gap_ms=cfg.rds_rt_gap_ms,
-                                bank=cfg.rds_rt_bank,
-                            )
+                candidate = (
+                    _resolve_file_rt(cfg) if current_mtime is not None else None
+                )
+                if candidate is not None:
+                    if candidate != file_text or rt_source != "file":
+                        _burst_rt(
+                            tx,
+                            candidate,
+                            ab_mode=cfg.rds_rt_ab_mode,
+                            repeats=cfg.rds_rt_repeats,
+                            gap_ms=cfg.rds_rt_gap_ms,
+                            bank=cfg.rds_rt_bank,
+                        )
+                        if rt_source != "file":
                             logger.info("RT source switch: %s -> file", rt_source)
-                            rt_source = "file"
-                            last_rt = candidate
-                        file_mtime = current_mtime
-                    else:
-                        alt = _resolve_rotation_rt(cfg, rot_idx) or ""
-                        if alt != last_rt or rt_source == "file":
-                            _burst_rt(
-                                tx,
-                                alt,
-                                ab_mode=cfg.rds_rt_ab_mode,
-                                repeats=cfg.rds_rt_repeats,
-                                gap_ms=cfg.rds_rt_gap_ms,
-                                bank=cfg.rds_rt_bank,
-                            )
-                            new_src = (
-                                f"list[{rot_idx}]" if cfg.rds_rt_texts else "fallback"
-                            )
-                            logger.info("RT source switch: file -> %s", new_src)
-                            rt_source = new_src
-                            last_rt = alt
-                        file_mtime = current_mtime
-
-                if current_mtime is None and file_mtime is not None:
+                        else:
+                            logger.info("RT file updated: %r", candidate)
+                        rt_source = "file"
+                        last_rt = candidate
+                    file_text = candidate
+                elif file_text is not None:
                     alt = _resolve_rotation_rt(cfg, rot_idx) or ""
                     if alt != last_rt or rt_source == "file":
                         _burst_rt(
@@ -634,11 +611,13 @@ def main() -> None:
                             gap_ms=cfg.rds_rt_gap_ms,
                             bank=cfg.rds_rt_bank,
                         )
-                        new_src = f"list[{rot_idx}]" if cfg.rds_rt_texts else "fallback"
+                        new_src = (
+                            f"list[{rot_idx}]" if cfg.rds_rt_texts else "fallback"
+                        )
                         logger.info("RT source switch: file -> %s", new_src)
                         rt_source = new_src
                         last_rt = alt
-                    file_mtime = current_mtime
+                    file_text = None
 
             # RT rotation tick (only when file is not active)
             now = time.monotonic()
