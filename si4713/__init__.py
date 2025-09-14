@@ -33,8 +33,8 @@ class SI4713:
         self.acomp: int = 0
         self.misc: int = 0
 
-        self._rt_ab_mode: str = "auto"   # 'legacy' | 'auto' | 'bank'
-        self._rt_ab: int = 1             # 0=A, 1=B
+        self._rt_ab_mode: str = "auto"  # 'legacy' | 'auto' | 'bank'
+        self._rt_ab: int = 1  # 0=A, 1=B
         self._last_rt: Optional[bytes] = None  # last 32-byte payload
 
     # ---------- Low-level helpers ----------
@@ -43,7 +43,8 @@ class SI4713:
         try:
             with self.lock:
                 self.bus.write_i2c_block_data(
-                    self.addr, self.buf[0], self.buf[1:nbytes])
+                    self.addr, self.buf[0], self.buf[1:nbytes]
+                )
                 time.sleep(0.054)
                 for _ in range(10):
                     status = self.bus.read_byte(self.addr)
@@ -162,7 +163,7 @@ class SI4713:
         else:
             self.acomp &= ~1
         if limiter_on:
-            self.acomp |= (1 << 1)
+            self.acomp |= 1 << 1
         else:
             self.acomp &= ~(1 << 1)
         self._set_prop(0x2200, self.acomp)
@@ -176,7 +177,7 @@ class SI4713:
 
     def rds_enable(self, on: bool) -> None:
         if on:
-            self.component |= (1 << 2)
+            self.component |= 1 << 2
         else:
             self.component &= ~(1 << 2)
         self._set_prop(0x2100, self.component)
@@ -190,21 +191,21 @@ class SI4713:
 
     def rds_set_tp(self, on: bool) -> None:
         if on:
-            self.misc |= (1 << 10)
+            self.misc |= 1 << 10
         else:
             self.misc &= ~(1 << 10)
         self._set_prop(0x2C03, self.misc)
 
     def rds_set_ta(self, on: bool) -> None:
         if on:
-            self.misc |= (1 << 4)
+            self.misc |= 1 << 4
         else:
             self.misc &= ~(1 << 4)
         self._set_prop(0x2C03, self.misc)
 
     def rds_set_ms_music(self, on: bool) -> None:
         if on:
-            self.misc |= (1 << 3)
+            self.misc |= 1 << 3
         else:
             self.misc &= ~(1 << 3)
         self._set_prop(0x2C03, self.misc)
@@ -216,17 +217,23 @@ class SI4713:
         compressed: Optional[bool] = None,
         dynamic_pty: Optional[bool] = None,
     ) -> None:
-        if stereo is not None:
-            self.misc = (self.misc | (1 << 12)) if stereo else (
-                self.misc & ~(1 << 12))
-        if artificial_head is not None:
-            self.misc = (self.misc | (1 << 13)) if artificial_head else (
-                self.misc & ~(1 << 13))
-        if compressed is not None:
-            self.misc = (self.misc | (1 << 14)) if compressed else (
-                self.misc & ~(1 << 14))
         if dynamic_pty is not None:
-            self.misc = (self.misc | (1 << 15)) if dynamic_pty else (
+            self.misc = (
+                (self.misc | (1 << 12)) if dynamic_pty else (
+                    self.misc & ~(1 << 12))
+            )
+        if compressed is not None:
+            self.misc = (
+                (self.misc | (1 << 13)) if compressed else (
+                    self.misc & ~(1 << 13))
+            )
+        if artificial_head is not None:
+            self.misc = (
+                (self.misc | (1 << 14)) if artificial_head else (
+                    self.misc & ~(1 << 14))
+            )
+        if stereo is not None:
+            self.misc = (self.misc | (1 << 15)) if stereo else (
                 self.misc & ~(1 << 15))
         self._set_prop(0x2C03, self.misc)
 
@@ -307,8 +314,14 @@ class SI4713:
         # Write 8 segments of 4 chars
         idx = 0
         for seg in range(8):
-            block_b = (2 << 12) | (0 << 11) | (tp << 10) | (
-                pty << 5) | (ab << 4) | (seg & 0x0F)
+            block_b = (
+                (2 << 12)
+                | (0 << 11)
+                | (tp << 10)
+                | (pty << 5)
+                | (ab << 4)
+                | (seg & 0x0F)
+            )
             self.buf[0] = 0x35
             self.buf[1] = 0x06 if seg == 0 else 0x04
             self.buf[2] = (block_b >> 8) & 0xFF
