@@ -41,6 +41,7 @@ logger = logging.getLogger("tx")
 
 RESET_PIN: int = 5
 REFCLK_HZ: int = 32768
+RT_MAX_LEN: int = 32
 
 # ---------------------------------------------------------------------
 # Helpers
@@ -89,11 +90,13 @@ def _get_mtime(path: Optional[str]) -> Optional[float]:
         return None
 
 
-def _read_text_file(path: str, max_bytes: int = 8192) -> Optional[str]:
+def _read_text_file(path: str) -> Optional[str]:
     try:
         with open(path, "r", encoding="utf-8", errors="replace") as fh:
-            line = fh.readline(max_bytes)
-        return line.rstrip("\r\n")
+            line = fh.readline(RT_MAX_LEN + 2)
+        return line.rstrip("\r\n")[:RT_MAX_LEN]
+    except FileNotFoundError:
+        return None
     except Exception as exc:  # noqa: BLE001
         logger.error("RT file read failed (%s): %s", path, exc)
         return None
@@ -271,7 +274,7 @@ class AppConfig:
 
 
 def _fmt_rt(s: str, center: bool) -> str:
-    return _center_fixed(s, 32) if center else s[:32]
+    return _center_fixed(s, RT_MAX_LEN) if center else s[:RT_MAX_LEN]
 
 
 def _resolve_file_rt(cfg: AppConfig) -> Tuple[Optional[str], Optional[str]]:
