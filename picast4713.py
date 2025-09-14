@@ -14,8 +14,8 @@ import os
 import sys
 import time
 from typing import Any, Dict, List, Optional, Tuple
-
 from si4713 import SI4713
+
 
 try:
     import yaml  # type: ignore[import-not-found]
@@ -339,15 +339,15 @@ def apply_config(tx: SI4713, cfg: AppConfig) -> Tuple[str, str, int, float]:
     tx.set_audio(deviation_hz=7500, mute=False, preemph_us=50)  # 75.00 kHz, 50 µs
 
     # Loudness & peak control
-    #    tx.set_audio_processing(
-    #        agc_on=True,
-    #        limiter_on=True,
-    #        comp_thr=-20,
-    #        comp_att=0,
-    #        comp_rel=4,
-    #        comp_gain=9,
-    #        lim_rel=80,
-    #    )
+    tx.set_audio_processing(
+        agc_on=False,  # Disable AGC
+        limiter_on=True,  # Keep limiter to avoid clipping
+        comp_thr=-30,  # Aggressive compression
+        comp_att=0,  # Fastest attack
+        comp_rel=2,  # Fast release
+        comp_gain=15,  # High gain
+        lim_rel=50,  # Fast limiter response
+    )
 
     # RDS flags/props
     tx.rds_set_pi(cfg.rds_pi)

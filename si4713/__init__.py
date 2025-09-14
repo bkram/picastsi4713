@@ -37,6 +37,50 @@ class SI4713:
         self._rt_ab: int = 1  # 0=A, 1=B
         self._last_rt: Optional[bytes] = None  # last 32-byte payload
 
+    def init(self, rst_pin: int, refclk_hz: int) -> bool:
+        try:
+            # --- Safety: ensure the lock exists even if something odd happened
+            if "lock" not in self.__dict__ or self.lock is None:
+                import threading
+
+                self.lock = threading.Lock()
+
+            GPIO.setwarnings(False)
+            GPIO.setmode(GPIO.BCM)
+            GPIO.setup(rst_pin, GPIO.OUT)
+
+            # HW reset: High → Low → High (keep your original timings)
+            GPIO.output(rst_pin, GPIO.HIGH)
+            time.sleep(0.05)
+            GPIO.output(rst_pin, GPIO.LOW)
+            time.sleep(0.05)
+            GPIO.output(rst_pin, GPIO.HIGH)
+            time.sleep(0.05)
+
+            with self.lock:
+                self.bus.write_i2c_block_data(self.addr, 0x01, [0x12, 0x50])
+
+            self.buf[0] = 0x80
+            self.buf[1] = 0x0E
+            if not self._write_buf(2):
+                logger.error("GPO_CTL write failed")
+                return False
+
+            if not self._set_prop(0x0201, refclk_hz):
+                logger.error("Failed to set REFCLK")
+                return False
+
+            self._set_prop(0x2300, 0x0007)
+
+            self._last_rt = None
+
+            logger.info("SI4713 init OK")
+            return True
+
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Init error: %s", exc)
+            return False
+
     # ---------- Low-level helpers ----------
 
     def _write_buf(self, nbytes: int) -> bool:
@@ -68,40 +112,6 @@ class SI4713:
 
     # ---------- Public control API ----------
 
-    def init(self, rst_pin: int, refclk_hz: int) -> bool:
-        try:
-            GPIO.setwarnings(False)
-            GPIO.setmode(GPIO.BCM)
-            GPIO.setup(rst_pin, GPIO.OUT)
-
-            # HW reset: High→Low→High
-            GPIO.output(rst_pin, GPIO.HIGH)
-            time.sleep(0.05)
-            GPIO.output(rst_pin, GPIO.LOW)
-            time.sleep(0.05)
-            GPIO.output(rst_pin, GPIO.HIGH)
-            time.sleep(0.05)
-
-            with self.lock:
-                self.bus.write_i2c_block_data(
-                    self.addr, 0x01, [0x12, 0x50])  # POWER_UP
-
-            # Default GPO
-            self.buf[0] = 0x80
-            self.buf[1] = 0x0E
-            self._write_buf(2)
-
-            if not self._set_prop(0x0201, refclk_hz):  # REFCLK
-                logger.error("Failed to set REFCLK")
-                return False
-
-            self._set_prop(0x2300, 0x0007)  # audio inputs mask (example)
-            logger.info("SI4713 init OK")
-            return True
-        except Exception as exc:  # noqa: BLE001
-            logger.error("Init error: %s", exc)
-            return False
-
     def hw_reset(self, rst_pin: int) -> None:
         try:
             GPIO.output(rst_pin, GPIO.LOW)
@@ -109,6 +119,9 @@ class SI4713:
             logger.info("Hardware reset asserted (TX stopped)")
         except Exception as exc:  # noqa: BLE001
             logger.error("HW reset failed: %s", exc)
+        finally:
+            # >>> NEW: clear RT state so first new RT is guaranteed to be a "new message"
+            self._last_rt = None
 
     def set_frequency_10khz(self, f10k: int) -> None:
         self.buf[0] = 0x30
@@ -219,22 +232,18 @@ class SI4713:
     ) -> None:
         if dynamic_pty is not None:
             self.misc = (
-                (self.misc | (1 << 12)) if dynamic_pty else (
-                    self.misc & ~(1 << 12))
+                (self.misc | (1 << 12)) if dynamic_pty else (self.misc & ~(1 << 12))
             )
         if compressed is not None:
             self.misc = (
-                (self.misc | (1 << 13)) if compressed else (
-                    self.misc & ~(1 << 13))
+                (self.misc | (1 << 13)) if compressed else (self.misc & ~(1 << 13))
             )
         if artificial_head is not None:
             self.misc = (
-                (self.misc | (1 << 14)) if artificial_head else (
-                    self.misc & ~(1 << 14))
+                (self.misc | (1 << 14)) if artificial_head else (self.misc & ~(1 << 14))
             )
         if stereo is not None:
-            self.misc = (self.misc | (1 << 15)) if stereo else (
-                self.misc & ~(1 << 15))
+            self.misc = (self.misc | (1 << 15)) if stereo else (self.misc & ~(1 << 15))
         self._set_prop(0x2C03, self.misc)
 
     def rds_set_deviation(self, dev_10hz: int) -> None:
@@ -275,25 +284,41 @@ class SI4713:
             raise ValueError("rt_ab_mode must be 'legacy', 'auto', or 'bank'")
         self._rt_ab_mode = m
 
-    def rds_set_rt(self, text: str, bank: Optional[int] = None) -> None:
+    def rds_set_rt(
+        self,
+        text: str,
+        bank: Optional[int] = None,
+        *,
+        force_new_message: bool = False,
+        cr_terminate: bool = True,
+    ) -> None:
         """
-        Send RadioText using Group 2A (32 chars) with UECP-like A/B rules.
+        Send RadioText using Group 2A (32 chars here) with UECP-like A/B rules.
 
+        Modes:
         - 'legacy': always bank A.
-        - 'auto': flip A/B if 32-byte payload differs from last.
-        - 'bank': use provided bank (0=A, 1=B); if None, reuse last.
+        - 'auto'  : flip A/B if payload differs OR force_new_message=True.
+        - 'bank'  : use provided bank (0=A, 1=B); if None, reuse last.
 
         Args:
-            text: RT string (first 32 characters are used; padded to 32).
-            bank: Optional explicit bank for 'bank' mode.
+            text: RT string (first 32 chars used).
+            bank: explicit bank for 'bank' mode.
+            force_new_message: force A/B flip even if payload is identical.
+            cr_terminate: insert 0x0D if shorter than full length (spec hint).
         """
-        # Build fixed 32-char payload
+        # ---- Build fixed 32-char payload with optional CR termination
         arr = [" "] * 32
-        for i in range(min(32, len(text))):
+        ln = min(32, len(text))
+        for i in range(ln):
             arr[i] = text[i]
+        if cr_terminate and ln < 32:
+            # put a single CR at the first free position (if not already CR)
+            if ln == 0 or arr[ln - 1] != "\r":
+                arr[ln] = "\r"
+
         payload = "".join(arr).encode("latin-1", "replace")
 
-        # Decide bank per mode
+        # ---- Decide bank per mode
         mode = self._rt_ab_mode
         if mode == "legacy":
             bank_to_send = 0
@@ -302,27 +327,30 @@ class SI4713:
                 self._rt_ab = int(bank) & 1
             bank_to_send = self._rt_ab & 1
         else:  # 'auto' (default)
-            if self._last_rt != payload:
+            if force_new_message or self._last_rt != payload:
                 self._rt_ab ^= 1
             bank_to_send = self._rt_ab & 1
 
-        # Prepare fields used in Block B
+        # ---- Prepare fields used in Block B (type 2A, version A)
         tp = (self.misc >> 10) & 0x01
         pty = (self.misc >> 5) & 0x1F
         ab = bank_to_send & 0x01
 
-        # Write 8 segments of 4 chars
+        # ---- Write 8 segments (0..7) of 4 chars = 32 chars total (type 2A)
+        # A new text starts at segment 0; we always send a complete set, then repeat
+        # (reliability per spec: send at least twice overall). :contentReference[oaicite:2]{index=2}
         idx = 0
         for seg in range(8):
             block_b = (
-                (2 << 12)
-                | (0 << 11)
+                (2 << 12)  # group type code = 2
+                | (0 << 11)  # version A
                 | (tp << 10)
                 | (pty << 5)
-                | (ab << 4)
-                | (seg & 0x0F)
+                | (ab << 4)  # Text A/B flag
+                | (seg & 0x0F)  # segment address
             )
             self.buf[0] = 0x35
+            # reset/load first, then continue
             self.buf[1] = 0x06 if seg == 0 else 0x04
             self.buf[2] = (block_b >> 8) & 0xFF
             self.buf[3] = block_b & 0xFF
