@@ -30,7 +30,7 @@ rds:
     flush_cycles: 3
     push_repeats: 6
     push_gap_ms: 100
-    ab_mode: "auto"
+    ab_mode: "legacy"
     poll_seconds: 0.5
 monitor:
   health: true
