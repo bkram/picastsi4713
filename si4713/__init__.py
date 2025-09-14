@@ -216,17 +216,17 @@ class SI4713:
         compressed: Optional[bool] = None,
         dynamic_pty: Optional[bool] = None,
     ) -> None:
-        if stereo is not None:
-            self.misc = (self.misc | (1 << 12)) if stereo else (
-                self.misc & ~(1 << 12))
-        if artificial_head is not None:
-            self.misc = (self.misc | (1 << 13)) if artificial_head else (
-                self.misc & ~(1 << 13))
-        if compressed is not None:
-            self.misc = (self.misc | (1 << 14)) if compressed else (
-                self.misc & ~(1 << 14))
         if dynamic_pty is not None:
-            self.misc = (self.misc | (1 << 15)) if dynamic_pty else (
+            self.misc = (self.misc | (1 << 12)) if dynamic_pty else (
+                self.misc & ~(1 << 12))
+        if compressed is not None:
+            self.misc = (self.misc | (1 << 13)) if compressed else (
+                self.misc & ~(1 << 13))
+        if artificial_head is not None:
+            self.misc = (self.misc | (1 << 14)) if artificial_head else (
+                self.misc & ~(1 << 14))
+        if stereo is not None:
+            self.misc = (self.misc | (1 << 15)) if stereo else (
                 self.misc & ~(1 << 15))
         self._set_prop(0x2C03, self.misc)
 

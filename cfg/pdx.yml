@@ -9,10 +9,10 @@ rds:
   ta: false
   ms_music: true
   di:
-    stereo: false # actually dynamic_pty
-    artificial_head: true # actually compressed
-    compressed: false # actually articial_head
-    dynamic_pty: true # actually is has_stereo
+    stereo: false
+    artificial_head: true
+    compressed: false
+    dynamic_pty: true
   ps:
     - "RADIO"
     - "PLOFKIP"
