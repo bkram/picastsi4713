@@ -144,6 +144,15 @@ class AppConfig:
     power: int  # 88..120 dBµV
     antenna_cap: int
 
+    # Audio processing
+    audio_agc_on: bool
+    audio_limiter_on: bool
+    audio_comp_thr: int
+    audio_comp_att: int
+    audio_comp_rel: int
+    audio_comp_gain: int
+    audio_lim_rel: int
+
     # RDS flags
     rds_pi: int
     rds_pty: int
@@ -185,10 +194,12 @@ class AppConfig:
         _enforce(isinstance(raw, dict), "root must be a mapping")
 
         rf = raw.get("rf", {})
+        audio = raw.get("audio", {})
         rds = raw.get("rds", {})
         monitor = raw.get("monitor", {})
 
         _enforce(isinstance(rf, dict), "rf must be a mapping")
+        _enforce(isinstance(audio, dict), "audio must be a mapping")
         _enforce(isinstance(rds, dict), "rds must be a mapping")
 
         # RF
@@ -205,6 +216,15 @@ class AppConfig:
             )
         self.power = pwr
         self.antenna_cap = max(0, min(255, _parse_int(rf.get("antenna_cap", 4), 4)))
+
+        # Audio processing
+        self.audio_agc_on = _parse_bool(audio.get("agc_on", False), False)
+        self.audio_limiter_on = _parse_bool(audio.get("limiter_on", True), True)
+        self.audio_comp_thr = _parse_int(audio.get("comp_thr", -30), -30)
+        self.audio_comp_att = _parse_int(audio.get("comp_att", 0), 0)
+        self.audio_comp_rel = _parse_int(audio.get("comp_rel", 2), 2)
+        self.audio_comp_gain = _parse_int(audio.get("comp_gain", 15), 15)
+        self.audio_lim_rel = _parse_int(audio.get("lim_rel", 50), 50)
 
         # RDS flags
         _enforce("pi" in rds, "rds.pi is required")
@@ -346,13 +366,13 @@ def apply_config(tx: SI4713, cfg: AppConfig) -> Tuple[str, str, int, float]:
 
     # Loudness & peak control
     tx.set_audio_processing(
-        agc_on=False,  # Disable AGC
-        limiter_on=True,  # Keep limiter to avoid clipping
-        comp_thr=-30,  # Aggressive compression
-        comp_att=0,  # Fastest attack
-        comp_rel=2,  # Fast release
-        comp_gain=15,  # High gain
-        lim_rel=50,  # Fast limiter response
+        agc_on=cfg.audio_agc_on,
+        limiter_on=cfg.audio_limiter_on,
+        comp_thr=cfg.audio_comp_thr,
+        comp_att=cfg.audio_comp_att,
+        comp_rel=cfg.audio_comp_rel,
+        comp_gain=cfg.audio_comp_gain,
+        lim_rel=cfg.audio_lim_rel,
     )
 
     # RDS flags/props
@@ -418,6 +438,24 @@ def reconfigure_live(tx: SI4713, old: AppConfig, new: AppConfig) -> bool:
     if old.rds_ta != new.rds_ta:
         tx.rds_set_ta(new.rds_ta)
         rt_dep_changed = True
+    if (
+        old.audio_agc_on != new.audio_agc_on
+        or old.audio_limiter_on != new.audio_limiter_on
+        or old.audio_comp_thr != new.audio_comp_thr
+        or old.audio_comp_att != new.audio_comp_att
+        or old.audio_comp_rel != new.audio_comp_rel
+        or old.audio_comp_gain != new.audio_comp_gain
+        or old.audio_lim_rel != new.audio_lim_rel
+    ):
+        tx.set_audio_processing(
+            agc_on=new.audio_agc_on,
+            limiter_on=new.audio_limiter_on,
+            comp_thr=new.audio_comp_thr,
+            comp_att=new.audio_comp_att,
+            comp_rel=new.audio_comp_rel,
+            comp_gain=new.audio_comp_gain,
+            lim_rel=new.audio_lim_rel,
+        )
     if old.rds_ms_music != new.rds_ms_music:
         tx.rds_set_ms_music(new.rds_ms_music)
         rt_dep_changed = True

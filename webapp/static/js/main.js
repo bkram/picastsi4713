@@ -6,6 +6,8 @@ const powerEl = document.getElementById('metric-power');
 const capEl = document.getElementById('metric-cap');
 const overmodEl = document.getElementById('metric-overmod');
 const watchdogEl = document.getElementById('metric-watchdog');
+const audioLevelEl = document.getElementById('metric-audio-level');
+const audioStatusEl = document.getElementById('metric-audio-status');
 const rdsPiEl = document.getElementById('metric-rds-pi');
 const rdsPtyEl = document.getElementById('metric-rds-pty');
 const rdsFlagsEl = document.getElementById('metric-rds-flags');
@@ -271,6 +273,38 @@ function updateStatus(data) {
   capEl.textContent = data.antenna_cap ?? '—';
   overmodEl.classList.toggle('is-hidden', !data.overmodulation);
   watchdogEl.textContent = data.watchdog_status || '—';
+  if (audioLevelEl && audioStatusEl) {
+    const audio = data.audio || {};
+    const levelValue = Number.isFinite(data.audio_input_dbfs)
+      ? Number(data.audio_input_dbfs)
+      : Number.isFinite(audio.input_level_dbfs)
+        ? Number(audio.input_level_dbfs)
+        : null;
+    audioLevelEl.textContent = levelValue === null ? '—' : `${levelValue} dBFS`;
+
+    const limiterEnabled = audio.limiter_on !== undefined ? !!audio.limiter_on : true;
+    let statusText = 'Telemetry idle';
+    let statusClass = '';
+    if (levelValue === null) {
+      statusText = 'Telemetry idle';
+    } else if (audio.overmod || data.overmodulation) {
+      statusText = 'Clipping';
+      statusClass = 'is-danger';
+    } else if (levelValue >= -1) {
+      statusText = 'Hot input';
+      statusClass = 'is-warning';
+    } else if (!limiterEnabled) {
+      statusText = 'Limiter off';
+    } else {
+      statusText = 'Limiter idle';
+    }
+
+    audioStatusEl.textContent = statusText;
+    audioStatusEl.classList.remove('is-warning', 'is-danger');
+    if (statusClass) {
+      audioStatusEl.classList.add(statusClass);
+    }
+  }
   const rds = data.rds || {};
   if (rdsPiEl) {
     rdsPiEl.textContent = rds.pi || '—';
@@ -371,6 +405,20 @@ function populateForm(config) {
   document.getElementById('rf-power').value = config.rf?.power ?? '';
   document.getElementById('rf-antenna').value = config.rf?.antenna_cap ?? '';
 
+  const audio = config.audio || {};
+  document.getElementById('audio-agc').checked = Boolean(audio.agc_on);
+  document.getElementById('audio-limiter').checked = audio.limiter_on !== false;
+  document.getElementById('audio-comp-thr').value =
+    audio.comp_thr !== undefined ? audio.comp_thr : '';
+  document.getElementById('audio-comp-att').value =
+    audio.comp_att !== undefined ? audio.comp_att : '';
+  document.getElementById('audio-comp-rel').value =
+    audio.comp_rel !== undefined ? audio.comp_rel : '';
+  document.getElementById('audio-comp-gain').value =
+    audio.comp_gain !== undefined ? audio.comp_gain : '';
+  document.getElementById('audio-lim-rel').value =
+    audio.lim_rel !== undefined ? audio.lim_rel : '';
+
   piInput.value = formatPiDigits(config.rds?.pi);
   document.getElementById('rds-pty').value = config.rds?.pty ?? '';
   document.getElementById('rds-deviation').value = config.rds?.deviation_hz ?? '';
@@ -455,6 +503,15 @@ function collectFormData() {
       interval_s: document.getElementById('monitor-interval').value.trim(),
       recovery_attempts: document.getElementById('monitor-recovery-attempts').value.trim(),
       recovery_backoff_s: document.getElementById('monitor-recovery-backoff').value.trim(),
+    },
+    audio: {
+      agc_on: document.getElementById('audio-agc').checked,
+      limiter_on: document.getElementById('audio-limiter').checked,
+      comp_thr: document.getElementById('audio-comp-thr').value.trim(),
+      comp_att: document.getElementById('audio-comp-att').value.trim(),
+      comp_rel: document.getElementById('audio-comp-rel').value.trim(),
+      comp_gain: document.getElementById('audio-comp-gain').value.trim(),
+      lim_rel: document.getElementById('audio-lim-rel').value.trim(),
     },
   };
 }

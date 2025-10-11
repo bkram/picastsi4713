@@ -61,11 +61,13 @@ class Metrics:
     power: int = 0
     antenna_cap: int = 0
     overmodulation: bool = False
+    audio_input_dbfs: Optional[int] = None
     broadcasting: bool = False
     watchdog_active: bool = False
     watchdog_status: str = "idle"
     config_name: Optional[str] = None
     rds: Dict[str, Any] = field(default_factory=dict)
+    audio: Dict[str, Any] = field(default_factory=dict)
     last_updated: float = field(default_factory=time.time)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -77,11 +79,13 @@ class Metrics:
             "power": self.power,
             "antenna_cap": self.antenna_cap,
             "overmodulation": self.overmodulation,
+            "audio_input_dbfs": self.audio_input_dbfs,
             "broadcasting": self.broadcasting,
             "watchdog_active": self.watchdog_active,
             "watchdog_status": self.watchdog_status,
             "config_name": self.config_name,
             "rds": self.rds,
+            "audio": self.audio,
             "last_updated": self.last_updated,
         }
 
@@ -146,6 +150,9 @@ class TransmitterManager:
         self._ps_next_tick: float = time.monotonic()
         self._broadcasting = False
         self._broadcast_since = 0.0
+        self._audio_level_dbfs: Optional[int] = None
+        self._audio_overmod: bool = False
+        self._status_overmod: bool = False
         self._lock = threading.RLock()
         self._stop_event = threading.Event()
         self._metrics = Metrics()
@@ -217,6 +224,15 @@ class TransmitterManager:
                 "power": cfg.power,
                 "antenna_cap": cfg.antenna_cap,
             },
+            "audio": {
+                "agc_on": cfg.audio_agc_on,
+                "limiter_on": cfg.audio_limiter_on,
+                "comp_thr": cfg.audio_comp_thr,
+                "comp_att": cfg.audio_comp_att,
+                "comp_rel": cfg.audio_comp_rel,
+                "comp_gain": cfg.audio_comp_gain,
+                "lim_rel": cfg.audio_lim_rel,
+            },
             "rds": {
                 "pi": cfg.rds_pi,
                 "pty": cfg.rds_pty,
@@ -261,11 +277,14 @@ class TransmitterManager:
             raise ValidationError("Configuration payload must be a mapping")
 
         rf_raw = payload.get("rf", {})
+        audio_raw = payload.get("audio", {})
         rds_raw = payload.get("rds", {})
         monitor_raw = payload.get("monitor", {})
 
         if not isinstance(rf_raw, dict) or not isinstance(rds_raw, dict):
             raise ValidationError("RF and RDS sections are required")
+        if audio_raw and not isinstance(audio_raw, dict):
+            raise ValidationError("Audio section must be an object")
 
         def _int(value: Any, field: str) -> int:
             try:
@@ -314,6 +333,18 @@ class TransmitterManager:
             "frequency_khz": _int(rf_raw.get("frequency_khz"), "rf.frequency_khz"),
             "power": _int(rf_raw.get("power"), "rf.power"),
             "antenna_cap": _int(rf_raw.get("antenna_cap", 4), "rf.antenna_cap"),
+        }
+
+        audio = {
+            "agc_on": _bool(audio_raw.get("agc_on")) if isinstance(audio_raw, dict) else False,
+            "limiter_on": _bool(audio_raw.get("limiter_on", True))
+            if isinstance(audio_raw, dict)
+            else True,
+            "comp_thr": _int(audio_raw.get("comp_thr", -30), "audio.comp_thr"),
+            "comp_att": _int(audio_raw.get("comp_att", 0), "audio.comp_att"),
+            "comp_rel": _int(audio_raw.get("comp_rel", 2), "audio.comp_rel"),
+            "comp_gain": _int(audio_raw.get("comp_gain", 15), "audio.comp_gain"),
+            "lim_rel": _int(audio_raw.get("lim_rel", 50), "audio.lim_rel"),
         }
 
         di_raw = rds_raw.get("di", {}) if isinstance(rds_raw.get("di"), dict) else {}
@@ -380,7 +411,12 @@ class TransmitterManager:
             ),
         }
 
-        normalized: Dict[str, Any] = {"rf": rf, "rds": rds, "monitor": monitor}
+        normalized: Dict[str, Any] = {
+            "rf": rf,
+            "audio": audio,
+            "rds": rds,
+            "monitor": monitor,
+        }
 
         cfg = AppConfig(normalized)
         # Ensure AppConfig normalisation (e.g. bool coercion) is reflected in saved data
@@ -395,6 +431,7 @@ class TransmitterManager:
 
         mapping: Dict[str, Any] = {
             "rf": serialized["rf"],
+            "audio": serialized["audio"],
             "rds": {
                 "pi": f"0x{serialized['rds']['pi']:04X}",
                 "pty": serialized["rds"]["pty"],
@@ -445,6 +482,10 @@ class TransmitterManager:
             self._broadcast_since = (
                 time.monotonic() if self._broadcasting else 0.0
             )
+            self._audio_level_dbfs = None
+            self._audio_overmod = False
+            self._status_overmod = False
+            self._metrics.audio_input_dbfs = None
             self._update_metrics(cfg, broadcasting=self._broadcasting)
 
             if cfg.monitor_health:
@@ -510,6 +551,11 @@ class TransmitterManager:
 
             self._broadcasting = actual_state
             self._broadcast_since = time.monotonic() if actual_state else 0.0
+            if not actual_state:
+                self._audio_level_dbfs = None
+                self._audio_overmod = False
+                self._status_overmod = False
+                self._metrics.audio_input_dbfs = None
             if cfg:
                 if enabled and cfg.monitor_health:
                     try:
@@ -552,6 +598,10 @@ class TransmitterManager:
             else:
                 self._metrics.broadcasting = enabled
                 self._metrics.watchdog_status = "running" if enabled else "paused"
+                if not enabled:
+                    self._metrics.audio_input_dbfs = None
+                    self._metrics.audio = {}
+                    self._status_overmod = False
                 self._metrics.last_updated = time.time()
                 self._publisher.broadcast(self._metrics.to_dict())
         return self.current_status()
@@ -645,6 +695,9 @@ class TransmitterManager:
                 if not cfg or tx is None:
                     self._metrics.watchdog_active = False
                     self._metrics.watchdog_status = "idle"
+                    self._metrics.audio_input_dbfs = None
+                    self._metrics.audio = {}
+                    self._status_overmod = False
                     self._metrics.last_updated = time.time()
                     self._publisher.broadcast(self._metrics.to_dict())
                 else:
@@ -654,13 +707,16 @@ class TransmitterManager:
                         "running" if broadcasting else "paused"
                     )
 
+                    overmod_flag = False
                     try:
                         status = tx.tx_status()
                         if status:
                             freq_10khz, power_level, overmod, _ = status
                             self._metrics.frequency_khz = freq_10khz * 10
                             self._metrics.power = power_level
-                            self._metrics.overmodulation = overmod
+                            overmod_flag = bool(overmod)
+                            self._status_overmod = overmod_flag
+                            self._metrics.overmodulation = overmod_flag
                             self._metrics.broadcasting = (
                                 broadcasting and power_level > 0
                             )
@@ -669,13 +725,48 @@ class TransmitterManager:
                                 "Watchdog metrics: freq=%.2fMHz power=%s overmod=%s broadcasting=%s",
                                 self._metrics.frequency_khz / 1000.0,
                                 power_level,
-                                overmod,
+                                overmod_flag,
                                 broadcasting,
                             )
                         else:
                             self._metrics.broadcasting = False
+                            self._status_overmod = False
                     except Exception as exc:  # noqa: BLE001
                         LOGGER.exception("Failed to read transmitter status: %s", exc)
+                        self._status_overmod = False
+
+                    try:
+                        if cfg.monitor_asq:
+                            asq_overmod, input_level = tx.read_asq()
+                            self._audio_level_dbfs = input_level
+                            self._audio_overmod = asq_overmod
+                            self._metrics.audio_input_dbfs = input_level
+                            overmod_flag = overmod_flag or asq_overmod
+                            LOGGER.debug(
+                                "ASQ metrics: level=%sdBFS overmod=%s",
+                                input_level,
+                                asq_overmod,
+                            )
+                            if asq_overmod or (input_level is not None and input_level >= 0):
+                                LOGGER.warning(
+                                    "Audio input high: %sdBFS%s",
+                                    input_level,
+                                    " (limiter active)" if asq_overmod else "",
+                                )
+                        else:
+                            self._audio_level_dbfs = None
+                            self._audio_overmod = False
+                            self._metrics.audio_input_dbfs = None
+                    except Exception:  # noqa: BLE001
+                        LOGGER.exception("Failed to read ASQ metrics")
+
+                    self._metrics.audio = self._audio_snapshot(cfg)
+                    if broadcasting:
+                        self._metrics.overmodulation = bool(
+                            overmod_flag or self._audio_overmod
+                        )
+                    else:
+                        self._metrics.overmodulation = False
 
                     try:
                         self._maybe_reload_config(cfg, tx)
@@ -723,6 +814,7 @@ class TransmitterManager:
             self._metrics.power = new_cfg.power
             self._metrics.antenna_cap = new_cfg.antenna_cap
             self._metrics.rds = self._rds_snapshot(new_cfg, self._broadcasting)
+            self._metrics.audio = self._audio_snapshot(new_cfg)
             if rt_changed:
                 candidate = _resolve_rotation_rt(new_cfg, self._rotation_idx) or ""
                 self._push_rt(tx, new_cfg, candidate, "config")
@@ -766,6 +858,7 @@ class TransmitterManager:
         self._metrics.rt = candidate.strip()
         self._metrics.rt_source = source
         self._metrics.rds = self._rds_snapshot(cfg, self._broadcasting)
+        self._metrics.audio = self._audio_snapshot(cfg)
         self._metrics.last_updated = time.time()
         self._publisher.broadcast(self._metrics.to_dict())
 
@@ -806,6 +899,7 @@ class TransmitterManager:
         self._ps_next_tick = now + self._ps_interval(cfg)
         self._metrics.ps = self._current_ps_display()
         self._metrics.rds = self._rds_snapshot(cfg, self._broadcasting)
+        self._metrics.audio = self._audio_snapshot(cfg)
         self._metrics.last_updated = time.time()
 
     def _health_window_open(self, since: float, cfg: AppConfig) -> bool:
@@ -832,6 +926,14 @@ class TransmitterManager:
         self._metrics.broadcasting = broadcasting
         self._metrics.watchdog_active = True
         self._metrics.watchdog_status = "running" if broadcasting else "paused"
+        self._metrics.audio_input_dbfs = self._audio_level_dbfs
+        self._metrics.audio = self._audio_snapshot(cfg)
+        if broadcasting:
+            self._metrics.overmodulation = bool(
+                self._status_overmod or self._audio_overmod
+            )
+        else:
+            self._metrics.overmodulation = False
         self._metrics.config_name = (
             str(self._config_path.relative_to(self.config_root))
             if self._config_path
@@ -864,4 +966,25 @@ class TransmitterManager:
                 "compressed": cfg.di_compressed,
                 "dynamic_pty": cfg.di_dynamic_pty,
             },
+        }
+
+    def _audio_snapshot(
+        self,
+        cfg: AppConfig,
+        *,
+        input_level: Optional[int] = None,
+        overmod: Optional[bool] = None,
+    ) -> Dict[str, Any]:
+        level = self._audio_level_dbfs if input_level is None else input_level
+        overmod_flag = self._audio_overmod if overmod is None else overmod
+        return {
+            "agc_on": cfg.audio_agc_on,
+            "limiter_on": cfg.audio_limiter_on,
+            "comp_thr": cfg.audio_comp_thr,
+            "comp_att": cfg.audio_comp_att,
+            "comp_rel": cfg.audio_comp_rel,
+            "comp_gain": cfg.audio_comp_gain,
+            "lim_rel": cfg.audio_lim_rel,
+            "input_level_dbfs": level,
+            "overmod": overmod_flag,
         }

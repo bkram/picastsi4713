@@ -176,6 +176,27 @@ body {
   color: var(--text-muted);
 }
 
+.metric--stacked {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.metric__meta--status {
+  color: var(--text-muted);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.metric__meta--status.is-warning {
+  color: #b45309;
+}
+
+.metric__meta--status.is-danger {
+  color: #b91c1c;
+}
+
 .status-pill {
   align-self: center;
   padding: 0.35rem 0.9rem;

@@ -1,6 +1,7 @@
 import threading
 import time
 from pathlib import Path
+from typing import Any, Dict
 
 import pytest
 
@@ -14,6 +15,14 @@ rf:
   frequency_khz: 98700
   power: 115
   antenna_cap: 4
+audio:
+  agc_on: false
+  limiter_on: true
+  comp_thr: -26
+  comp_att: 1
+  comp_rel: 4
+  comp_gain: 12
+  lim_rel: 60
 rds:
   pi: 0x1234
   pty: 5
@@ -64,6 +73,7 @@ class StubSI4713:
         self.power = 0
         self.antenna = 0
         self.closed = False
+        self.audio_settings: Dict[str, Any] = {}
 
     def init(self, *_: object, **__: object) -> bool:
         return True
@@ -84,8 +94,26 @@ class StubSI4713:
     def set_audio(self, *_: object, **__: object) -> None:
         return
 
-    def set_audio_processing(self, *_: object, **__: object) -> None:
-        return
+    def set_audio_processing(
+        self,
+        *,
+        agc_on: bool,
+        limiter_on: bool,
+        comp_thr: int,
+        comp_att: int,
+        comp_rel: int,
+        comp_gain: int,
+        lim_rel: int,
+    ) -> None:
+        self.audio_settings = {
+            "agc_on": agc_on,
+            "limiter_on": limiter_on,
+            "comp_thr": comp_thr,
+            "comp_att": comp_att,
+            "comp_rel": comp_rel,
+            "comp_gain": comp_gain,
+            "lim_rel": lim_rel,
+        }
 
     def rds_set_pi(self, *_: object, **__: object) -> None:
         return
@@ -162,7 +190,12 @@ def test_apply_config_initialises_hardware(manager: TransmitterManager, tmp_path
     assert status["broadcasting"] is True
     assert status["rds"]["pi"] == "0x1234"
     assert status["rds"]["tp"] is True
+    assert status["audio"]["limiter_on"] is True
+    assert status["audio"]["comp_thr"] == -26
+    assert status["audio"]["comp_gain"] == 12
     assert isinstance(manager._tx, StubSI4713)  # type: ignore[attr-defined]
+    assert manager._tx.audio_settings["comp_thr"] == -26  # type: ignore[attr-defined]
+    assert manager._tx.audio_settings["limiter_on"] is True  # type: ignore[attr-defined]
 
     queue = manager.metrics_queue()
     event = queue.get(timeout=2)
@@ -170,6 +203,8 @@ def test_apply_config_initialises_hardware(manager: TransmitterManager, tmp_path
     assert event["rds"]["pi"] == "0x1234"
     assert event["rds"]["ps_current"].strip() == "TESTFM"
     assert event["rds"]["ps_active_index"] == 0
+    assert event["audio"]["limiter_on"] is True
+    assert event.get("audio_input_dbfs") is None
     manager.unregister_queue(queue)
 
 
@@ -198,6 +233,8 @@ def test_read_config_struct_returns_full_payload(manager: TransmitterManager, tm
     data = manager.read_config_struct(Path("station.yml"))
     assert data["rf"]["frequency_khz"] == 98700
     assert data["rds"]["pi"] == "0x1234"
+    assert data["audio"]["limiter_on"] is True
+    assert data["audio"]["comp_thr"] == -26
     assert data["rds"]["ps"] == ["TESTFM"]
     assert data["rds"]["di"] == {
         "stereo": True,
@@ -252,10 +289,12 @@ def test_write_config_struct_roundtrip(manager: TransmitterManager, tmp_path: Pa
     cfg_path.write_text(SAMPLE_CFG, encoding="utf-8")
     payload = manager.read_config_struct(Path("station.yml"))
     payload["rf"]["power"] = 100
+    payload["audio"]["comp_gain"] = 20
     manager.write_config_struct(Path("copy.yml"), payload)
     raw = manager.read_config(Path("copy.yml"))
     assert "power: 100" in raw
     assert "pi: 0x1234" in raw
+    assert "comp_gain: 20" in raw
 
 
 def test_write_config_struct_normalizes_ab_mode(manager: TransmitterManager, tmp_path: Path) -> None:
@@ -345,11 +384,14 @@ def test_toggle_broadcast_cycle(manager: TransmitterManager, tmp_path: Path) -> 
     assert status["broadcasting"] is False
     assert status["watchdog_status"] == "paused"
     assert status["rds"]["enabled"] is False
+    assert status["audio_input_dbfs"] is None
+    assert status["audio"]["limiter_on"] is True
 
     status = manager.set_broadcast(True)
     assert status["broadcasting"] is True
     assert status["watchdog_status"] == "running"
     assert status["rds"]["enabled"] is True
+    assert status["audio"]["comp_thr"] == -26
 
 
 def test_apply_config_recovers_when_initial_tx_down(

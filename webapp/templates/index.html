@@ -58,6 +58,11 @@
                   <span id="metric-cap">—</span>
                 </div>
               </div>
+              <div class="metric metric--stacked">
+                <div class="metric__label">Audio Input</div>
+                <div class="metric__value metric__value--secondary" id="metric-audio-level">—</div>
+                <div class="metric__meta metric__meta--status" id="metric-audio-status">Limiter idle</div>
+              </div>
             </div>
           </div>
           <div class="hero-rds">
@@ -134,25 +139,51 @@
 
         <fieldset id="config-fields" class="config-fieldset" disabled>
           <div class="pure-g config-grid">
-            <div class="pure-u-1 pure-u-lg-1-3 config-column">
-              <section class="card card--compact">
-                <header class="card__header">
-                  <h3 class="card__title">RF Settings</h3>
-                </header>
-                <div class="card__body card__body--compact">
-                  <label for="rf-frequency">Frequency (kHz)</label>
-                  <input type="number" id="rf-frequency" class="pure-input-1" min="76000" step="1">
-                  <label for="rf-power">Power (dBµV)</label>
-                  <input type="number" id="rf-power" class="pure-input-1" min="88" max="120">
-                  <label for="rf-antenna">Antenna Capacitance</label>
-                  <input type="number" id="rf-antenna" class="pure-input-1" min="0" max="255">
-                </div>
-              </section>
+          <div class="pure-u-1 pure-u-lg-1-3 config-column">
+            <section class="card card--compact">
+              <header class="card__header">
+                <h3 class="card__title">RF Settings</h3>
+              </header>
+              <div class="card__body card__body--compact">
+                <label for="rf-frequency">Frequency (kHz)</label>
+                <input type="number" id="rf-frequency" class="pure-input-1" min="76000" step="1">
+                <label for="rf-power">Power (dBµV)</label>
+                <input type="number" id="rf-power" class="pure-input-1" min="88" max="120">
+                <label for="rf-antenna">Antenna Capacitance</label>
+                <input type="number" id="rf-antenna" class="pure-input-1" min="0" max="255">
+              </div>
+            </section>
 
-              <section class="card card--compact">
-                <header class="card__header">
-                  <h3 class="card__title">Watchdog &amp; Monitoring</h3>
-                </header>
+            <section class="card card--compact">
+              <header class="card__header">
+                <h3 class="card__title">Audio Processing</h3>
+              </header>
+              <div class="card__body card__body--compact">
+                <label class="checkbox">
+                  <input type="checkbox" id="audio-agc">
+                  <span>Automatic Gain Control (AGC)</span>
+                </label>
+                <label class="checkbox">
+                  <input type="checkbox" id="audio-limiter">
+                  <span>Limiter Enabled</span>
+                </label>
+                <label for="audio-comp-thr">Compressor Threshold (dB)</label>
+                <input type="number" id="audio-comp-thr" class="pure-input-1" min="-96" max="31">
+                <label for="audio-comp-att">Attack (index)</label>
+                <input type="number" id="audio-comp-att" class="pure-input-1" min="0" max="63">
+                <label for="audio-comp-rel">Release (index)</label>
+                <input type="number" id="audio-comp-rel" class="pure-input-1" min="0" max="63">
+                <label for="audio-comp-gain">Gain (dB)</label>
+                <input type="number" id="audio-comp-gain" class="pure-input-1" min="0" max="63">
+                <label for="audio-lim-rel">Limiter Release (index)</label>
+                <input type="number" id="audio-lim-rel" class="pure-input-1" min="0" max="1023">
+              </div>
+            </section>
+
+            <section class="card card--compact">
+              <header class="card__header">
+                <h3 class="card__title">Watchdog &amp; Monitoring</h3>
+              </header>
                 <div class="card__body card__body--compact">
                   <label class="checkbox">
                     <input type="checkbox" id="monitor-health">
