@@ -208,7 +208,7 @@ else:  # pragma: no cover - ensure stub detection
 
 class TransmitterManager:
     def __init__(self, config_root: Path) -> None:
-        self.config_root = config_root
+        self.config_root = config_root.resolve()
         self.config_root.mkdir(parents=True, exist_ok=True)
 
         self._tx = None

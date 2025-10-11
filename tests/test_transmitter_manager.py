@@ -73,6 +73,19 @@ def test_apply_config_uses_virtual_si4713(manager: TransmitterManager, tmp_path:
     manager.shutdown()
 
 
+def test_apply_config_with_relative_config_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.chdir(tmp_path)
+    relative_root = Path("configs")
+    manager = TransmitterManager(config_root=relative_root)
+    cfg_path = relative_root / "station.yml"
+    cfg_path.write_text(SAMPLE_CFG, encoding="utf-8")
+
+    status = manager.apply_config(Path("station.yml"))
+    assert status["config_name"] == "station.yml"
+
+    manager.shutdown()
+
+
 def test_write_config_rejects_invalid_yaml(manager: TransmitterManager):
     with pytest.raises(ValidationError):
         manager.write_config(Path("invalid.yml"), ":::bad:::yaml:::")
