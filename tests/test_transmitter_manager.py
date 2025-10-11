@@ -9,7 +9,7 @@ import pytest
 
 pytest.importorskip("yaml")
 
-from webapp.transmitter import TransmitterManager, ValidationError
+from webapp.transmitter import TransmitterManager, ValidationError, VirtualSI4713
 
 
 SAMPLE_CFG = """
@@ -180,3 +180,71 @@ def test_toggle_broadcast_cycle(manager: TransmitterManager, tmp_path: Path):
     status = manager.set_broadcast(True)
     assert status["broadcasting"] is True
     assert status["watchdog_status"] == "running"
+
+
+def test_apply_config_falls_back_to_virtual_on_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from webapp import transmitter as txmod
+
+    class ExplodingSI4713:
+        def init(self, *_: object, **__: object) -> bool:
+            return True
+
+        def set_output(self, *_: object, **__: object) -> None:
+            return
+
+        def set_frequency_10khz(self, *_: object, **__: object) -> None:
+            return
+
+        def enable_mpx(self, *_: object, **__: object) -> None:
+            raise RuntimeError("i2c bus unavailable")
+
+        def close(self) -> None:
+            return
+
+    monkeypatch.setattr(txmod, "HardwareSI4713", ExplodingSI4713)
+
+    manager = TransmitterManager(config_root=tmp_path, prefer_virtual=False)
+    cfg_path = tmp_path / "station.yml"
+    cfg_path.write_text(SAMPLE_CFG, encoding="utf-8")
+
+    status = manager.apply_config(Path("station.yml"))
+    assert status["broadcasting"] is True
+    assert isinstance(manager._tx, VirtualSI4713)
+
+    manager.shutdown()
+
+
+def test_toggle_broadcast_recovers_with_virtual_backend(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from webapp import transmitter as txmod
+
+    class FlakySI4713(VirtualSI4713):
+        def __init__(self) -> None:
+            super().__init__()
+            self._enable_attempts = 0
+
+        def enable_mpx(self, on: bool) -> None:  # type: ignore[override]
+            if on:
+                self._enable_attempts += 1
+                if self._enable_attempts >= 2:
+                    raise RuntimeError("enable failure")
+            super().enable_mpx(on)
+
+    monkeypatch.setattr(txmod, "HardwareSI4713", FlakySI4713)
+
+    manager = TransmitterManager(config_root=tmp_path, prefer_virtual=False)
+    cfg_path = tmp_path / "station.yml"
+    cfg_path.write_text(SAMPLE_CFG, encoding="utf-8")
+
+    manager.apply_config(Path("station.yml"))
+    status = manager.set_broadcast(False)
+    assert status["broadcasting"] is False
+
+    status = manager.set_broadcast(True)
+    assert status["broadcasting"] is True
+    assert isinstance(manager._tx, VirtualSI4713)
+
+    manager.shutdown()

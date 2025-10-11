@@ -25,8 +25,17 @@ def create_app(config: dict[str, Any] | None = None) -> "Flask":
     if config:
         app.config.update(config)
 
+    prefer_virtual_cfg = app.config.get("USE_VIRTUAL")
+    if isinstance(prefer_virtual_cfg, str):
+        prefer_virtual = prefer_virtual_cfg.strip().lower() in {"1", "true", "yes", "on"}
+    elif prefer_virtual_cfg is None:
+        prefer_virtual = None
+    else:
+        prefer_virtual = bool(prefer_virtual_cfg)
+
     manager = TransmitterManager(
         config_root=Path(app.config["CONFIG_ROOT"]),
+        prefer_virtual=prefer_virtual,
     )
     app.transmitter_manager = manager  # type: ignore[attr-defined]
     app.register_blueprint(bp)

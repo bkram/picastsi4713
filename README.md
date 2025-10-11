@@ -91,6 +91,10 @@ profiles and watch telemetry from a browser. To start it locally:
    python run_dashboard.py --host 0.0.0.0 --port 5000 --config-root /path/to/cfg
    ```
 
+   Add `--virtual` or `--no-virtual` to explicitly choose between the
+   simulated and hardware SI4713 backends when auto-detection is not
+   desired.
+
    When `--debug` is omitted the server runs in production mode with the
    reloader disabled.
 
@@ -99,6 +103,13 @@ profiles and watch telemetry from a browser. To start it locally:
 The background watchdog and broadcast controls mirror the CLI behaviour,
 so any profile you apply from the UI immediately affects the live
 transmitter.
+
+> **Hardware vs. virtual mode**
+>
+> The dashboard automatically falls back to a virtual SI4713 backend when
+> it cannot see `/dev/i2c-1`, allowing development on machines without
+> radio hardware. Set `PICAST_USE_VIRTUAL=0` to force hardware usage or
+> `PICAST_USE_VIRTUAL=1` to explicitly stay in virtual mode.
 
 ---
 

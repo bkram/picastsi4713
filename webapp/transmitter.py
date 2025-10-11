@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import queue
 import threading
 import time
@@ -206,12 +207,16 @@ else:  # pragma: no cover - ensure stub detection
         HardwareSI4713 = None  # type: ignore[assignment]
 
 
+_TRUTHY = {"1", "true", "yes", "on"}
+
+
 class TransmitterManager:
-    def __init__(self, config_root: Path) -> None:
+    def __init__(self, config_root: Path, *, prefer_virtual: Optional[bool] = None) -> None:
         self.config_root = config_root.resolve()
         self.config_root.mkdir(parents=True, exist_ok=True)
 
         self._tx = None
+        self._tx_backend = "unknown"
         self._config: Optional[AppConfig] = None
         self._config_path: Optional[Path] = None
         self._config_mtime: Optional[float] = None
@@ -226,6 +231,17 @@ class TransmitterManager:
         self._metrics = Metrics()
         self._publisher = MetricsPublisher()
         self._watchdog_thread: Optional[threading.Thread] = None
+
+        if prefer_virtual is None:
+            env = os.environ.get("PICAST_USE_VIRTUAL")
+            if env is not None:
+                prefer_virtual = env.strip().lower() in _TRUTHY
+            else:
+                prefer_virtual = not Path("/dev/i2c-1").exists()
+
+        self._prefer_virtual = bool(prefer_virtual)
+        if self._prefer_virtual:
+            LOGGER.info("Virtual SI4713 backend selected (hardware access disabled)")
 
     # ---------------------- public API ----------------------
 
@@ -497,12 +513,20 @@ class TransmitterManager:
             self._config_path = path
             self._config_mtime = _get_mtime(str(path))
             try:
-                self._rt_state, self._rt_source, self._rotation_idx, self._next_rotation = (
-                    apply_tx_config(tx, cfg)
-                )
+                self._apply_config_on_backend(tx, cfg)
             except Exception as exc:  # noqa: BLE001
-                LOGGER.exception("Failed to apply configuration")
-                raise ValidationError(str(exc)) from exc
+                LOGGER.exception("Failed to apply configuration using %s backend", self._tx_backend)
+                fallback = None
+                if self._tx_backend != "virtual":
+                    fallback = self._switch_to_virtual_backend(str(exc))
+                if fallback is None:
+                    raise ValidationError(str(exc)) from exc
+                tx = fallback
+                try:
+                    self._apply_config_on_backend(tx, cfg)
+                except Exception as retry_exc:  # noqa: BLE001
+                    LOGGER.exception("Failed to apply configuration on virtual backend")
+                    raise ValidationError(str(retry_exc)) from retry_exc
             self._rt_file_mtime = _get_mtime(cfg.rds_rt_file)
             self._broadcasting = True
             self._update_metrics(cfg, broadcasting=True)
@@ -523,7 +547,20 @@ class TransmitterManager:
             try:
                 tx.enable_mpx(enabled)
             except Exception as exc:  # noqa: BLE001
-                raise ValidationError(str(exc)) from exc
+                fallback = None
+                if enabled and self._tx_backend != "virtual":
+                    fallback = self._switch_to_virtual_backend(str(exc))
+                if fallback is None:
+                    raise ValidationError(str(exc)) from exc
+                tx = fallback
+                try:
+                    if enabled and cfg:
+                        self._apply_config_on_backend(tx, cfg)
+                        self._rt_file_mtime = _get_mtime(cfg.rds_rt_file)
+                    else:
+                        tx.enable_mpx(enabled)
+                except Exception as retry_exc:  # noqa: BLE001
+                    raise ValidationError(str(retry_exc)) from retry_exc
             self._broadcasting = enabled
             if cfg:
                 if enabled:
@@ -574,17 +611,59 @@ class TransmitterManager:
     def _ensure_tx(self):
         if self._tx is not None:
             return self._tx
-        impl = HardwareSI4713 or VirtualSI4713
+
+        candidates = []
+        if not self._prefer_virtual and HardwareSI4713 is not None:
+            candidates.append(("hardware", HardwareSI4713))
+        candidates.append(("virtual", VirtualSI4713))
+
+        last_error: Optional[Exception] = None
+        for backend, impl in candidates:
+            try:
+                tx = impl()  # type: ignore[operator]
+                if not tx.init(RESET_PIN, REFCLK_HZ):
+                    raise RuntimeError("initialisation failed")
+            except Exception as exc:  # noqa: BLE001
+                LOGGER.exception(
+                    "Failed to initialise %s SI4713 backend: %s", backend, exc
+                )
+                last_error = exc
+                continue
+
+            self._tx = tx
+            self._tx_backend = backend
+            return tx
+
+        raise ValidationError("Transmitter hardware unavailable") from last_error
+
+    def _switch_to_virtual_backend(self, reason: str) -> Optional[Any]:
+        if isinstance(self._tx, VirtualSI4713):
+            return self._tx
+
+        LOGGER.warning("Switching to virtual SI4713 backend (%s)", reason)
+
+        tx = self._tx
+        if tx is not None:
+            try:
+                tx.close()
+            except Exception:  # noqa: BLE001
+                LOGGER.exception("Failed to close hardware transmitter")
+
+        virtual = VirtualSI4713()
         try:
-            tx = impl()  # type: ignore[operator]
+            virtual.init(RESET_PIN, REFCLK_HZ)
         except Exception as exc:  # noqa: BLE001
-            LOGGER.exception("Failed to instantiate transmitter")
-            raise ValidationError(str(exc)) from exc
-        if not tx.init(RESET_PIN, REFCLK_HZ):
-            LOGGER.error("Transmitter initialisation failed")
-            raise ValidationError("Failed to initialise transmitter")
-        self._tx = tx
-        return tx
+            LOGGER.exception("Virtual SI4713 initialisation failed: %s", exc)
+            return None
+
+        self._tx = virtual
+        self._tx_backend = "virtual"
+        return virtual
+
+    def _apply_config_on_backend(self, tx: Any, cfg: AppConfig) -> None:
+        self._rt_state, self._rt_source, self._rotation_idx, self._next_rotation = (
+            apply_tx_config(tx, cfg)
+        )
 
     def _ensure_watchdog(self) -> None:
         if self._watchdog_thread and self._watchdog_thread.is_alive():
