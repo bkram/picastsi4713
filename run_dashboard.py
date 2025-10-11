@@ -32,19 +32,6 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Enable Flask debug mode",
     )
-    parser.add_argument(
-        "--virtual",
-        dest="virtual",
-        action="store_true",
-        help="Force the virtual SI4713 backend (overrides auto-detection)",
-    )
-    parser.add_argument(
-        "--no-virtual",
-        dest="virtual",
-        action="store_false",
-        help="Force the hardware SI4713 backend",
-    )
-    parser.set_defaults(virtual=None)
     return parser.parse_args()
 
 
@@ -59,8 +46,6 @@ def main() -> None:
         ) from exc
 
     config: dict[str, Any] = {"CONFIG_ROOT": str(args.config_root)}
-    if args.virtual is not None:
-        config["USE_VIRTUAL"] = args.virtual
     if args.debug:
         config["DEBUG"] = True
 

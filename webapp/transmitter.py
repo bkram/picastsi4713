@@ -2,13 +2,12 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import queue
 import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import importlib
 import sys
@@ -110,94 +109,6 @@ class MetricsPublisher:
                 continue
 
 
-class VirtualSI4713:
-    """Graceful stub used when hardware is unavailable."""
-
-    def __init__(self) -> None:
-        self._transmitting = False
-        self._rt = ""
-        self._ps: List[str] = [""] * 8
-        self._power = 0
-        self._antenna = 0
-        self._frequency = 0
-
-    def init(self, *_: Any, **__: Any) -> bool:
-        LOGGER.warning("Using virtual SI4713 implementation")
-        return True
-
-    def set_output(self, power: int, antenna: int) -> None:
-        self._power = power
-        self._antenna = antenna
-
-    def set_frequency_10khz(self, freq: int) -> None:
-        self._frequency = freq * 10
-
-    def enable_mpx(self, on: bool) -> None:
-        self._transmitting = on
-
-    def set_pilot(self, *_: Any, **__: Any) -> None:  # pragma: no cover - no-op
-        return
-
-    def set_audio(self, *_: Any, **__: Any) -> None:  # pragma: no cover - no-op
-        return
-
-    def set_audio_processing(self, *_: Any, **__: Any) -> None:  # pragma: no cover
-        return
-
-    def rds_set_pi(self, *_: Any, **__: Any) -> None:  # pragma: no cover - no-op
-        return
-
-    def rds_set_pty(self, *_: Any, **__: Any) -> None:  # pragma: no cover - no-op
-        return
-
-    def rds_set_tp(self, *_: Any, **__: Any) -> None:  # pragma: no cover - no-op
-        return
-
-    def rds_set_ta(self, *_: Any, **__: Any) -> None:  # pragma: no cover - no-op
-        return
-
-    def rds_set_ms_music(self, *_: Any, **__: Any) -> None:  # pragma: no cover
-        return
-
-    def rds_set_di(self, *_: Any, **__: Any) -> None:  # pragma: no cover
-        return
-
-    def rds_set_deviation(self, *_: Any, **__: Any) -> None:  # pragma: no cover
-        return
-
-    def rds_set_ps(self, text: str, slot: int) -> None:
-        if 0 <= slot < len(self._ps):
-            self._ps[slot] = text
-
-    def rds_set_pscount(self, *_: Any, **__: Any) -> None:  # pragma: no cover
-        return
-
-    def set_rt_ab_mode(self, *_: Any, **__: Any) -> None:  # pragma: no cover
-        return
-
-    def rds_set_rt(self, text: str, *_: Any, **__: Any) -> None:
-        self._rt = text
-
-    def rds_enable(self, *_: Any, **__: Any) -> None:  # pragma: no cover
-        return
-
-    def hw_reset(self, *_: Any, **__: Any) -> None:
-        self._transmitting = False
-
-    def is_transmitting(self) -> bool:
-        return self._transmitting
-
-    def tx_status(self) -> Optional[tuple[int, int, bool, int]]:
-        power = self._power if self._transmitting else 0
-        return (self._frequency // 10, power, False, 0)
-
-    def read_asq(self) -> tuple[bool, int]:
-        return False, 0
-
-    def close(self) -> None:  # pragma: no cover - nothing to clean up
-        return
-
-
 try:  # pragma: no cover - hardware import guard
     from si4713 import SI4713 as HardwareSI4713
 except Exception:  # noqa: BLE001
@@ -207,16 +118,18 @@ else:  # pragma: no cover - ensure stub detection
         HardwareSI4713 = None  # type: ignore[assignment]
 
 
-_TRUTHY = {"1", "true", "yes", "on"}
-
-
 class TransmitterManager:
-    def __init__(self, config_root: Path, *, prefer_virtual: Optional[bool] = None) -> None:
+    def __init__(
+        self,
+        config_root: Path,
+        *,
+        tx_factory: Optional[Callable[[], Any]] = None,
+    ) -> None:
         self.config_root = config_root.resolve()
         self.config_root.mkdir(parents=True, exist_ok=True)
 
         self._tx = None
-        self._tx_backend = "unknown"
+        self._tx_factory = tx_factory or self._hardware_factory
         self._config: Optional[AppConfig] = None
         self._config_path: Optional[Path] = None
         self._config_mtime: Optional[float] = None
@@ -232,17 +145,6 @@ class TransmitterManager:
         self._metrics = Metrics()
         self._publisher = MetricsPublisher()
         self._watchdog_thread: Optional[threading.Thread] = None
-
-        if prefer_virtual is None:
-            env = os.environ.get("PICAST_USE_VIRTUAL")
-            if env is not None:
-                prefer_virtual = env.strip().lower() in _TRUTHY
-            else:
-                prefer_virtual = not Path("/dev/i2c-1").exists()
-
-        self._prefer_virtual = bool(prefer_virtual)
-        if self._prefer_virtual:
-            LOGGER.info("Virtual SI4713 backend selected (hardware access disabled)")
 
     # ---------------------- public API ----------------------
 
@@ -515,40 +417,25 @@ class TransmitterManager:
             self._config_path = path
             self._config_mtime = _get_mtime(str(path))
             try:
-                LOGGER.debug(
-                    "Pushing configuration to %s backend", self._tx_backend
-                )
+                LOGGER.debug("Pushing configuration to SI4713")
                 self._apply_config_on_backend(tx, cfg)
                 LOGGER.debug("Configuration applied successfully")
             except Exception as exc:  # noqa: BLE001
-                LOGGER.exception(
-                    "Failed to apply configuration using %s backend", self._tx_backend
-                )
-                fallback = None
-                if self._tx_backend != "virtual":
-                    fallback = self._switch_to_virtual_backend(str(exc))
-                if fallback is None:
-                    raise ValidationError(str(exc)) from exc
-                tx = fallback
-                try:
-                    LOGGER.debug("Retrying configuration using virtual backend")
-                    self._apply_config_on_backend(tx, cfg)
-                    LOGGER.debug("Configuration applied on virtual backend")
-                except Exception as retry_exc:  # noqa: BLE001
-                    LOGGER.exception("Failed to apply configuration on virtual backend")
-                    raise ValidationError(str(retry_exc)) from retry_exc
+                LOGGER.exception("Failed to apply configuration to SI4713")
+                raise ValidationError(str(exc)) from exc
 
             self._rt_file_mtime = _get_mtime(cfg.rds_rt_file)
-            self._broadcasting = True
-            self._broadcast_since = time.monotonic()
-            self._update_metrics(cfg, broadcasting=True)
+            self._broadcasting = bool(tx.is_transmitting())
+            self._broadcast_since = (
+                time.monotonic() if self._broadcasting else 0.0
+            )
+            self._update_metrics(cfg, broadcasting=self._broadcasting)
 
             if cfg.monitor_health:
                 try:
                     transmitting = tx.is_transmitting()
                     LOGGER.debug(
-                        "Post-apply health check: backend=%s transmitting=%s",
-                        self._tx_backend,
+                        "Post-apply health check: transmitting=%s",
                         transmitting,
                     )
                     if transmitting:
@@ -569,8 +456,11 @@ class TransmitterManager:
                         # recover_tx reapplies config; resync internal state
                         LOGGER.info("Recovery succeeded; re-applying configuration")
                         self._apply_config_on_backend(tx, cfg)
-                        self._broadcast_since = time.monotonic()
-                        self._update_metrics(cfg, broadcasting=True)
+                        self._broadcasting = bool(tx.is_transmitting())
+                        self._broadcast_since = (
+                            time.monotonic() if self._broadcasting else 0.0
+                        )
+                        self._update_metrics(cfg, broadcasting=self._broadcasting)
                 except ValidationError:
                     raise
                 except Exception as exc:  # noqa: BLE001
@@ -595,40 +485,24 @@ class TransmitterManager:
                 tx = self._tx
                 if tx is None:
                     raise ValidationError("Transmitter not initialised")
-            LOGGER.info(
-                "Setting broadcast %s (backend=%s)",
-                "ON" if enabled else "OFF",
-                self._tx_backend,
-            )
+            LOGGER.info("Setting broadcast %s", "ON" if enabled else "OFF")
             try:
                 tx.enable_mpx(enabled)
+                actual_state = bool(tx.is_transmitting()) if enabled else False
             except Exception as exc:  # noqa: BLE001
-                fallback = None
-                if enabled and self._tx_backend != "virtual":
-                    fallback = self._switch_to_virtual_backend(str(exc))
-                if fallback is None:
-                    raise ValidationError(str(exc)) from exc
-                tx = fallback
-                try:
-                    if enabled and cfg:
-                        self._apply_config_on_backend(tx, cfg)
-                        self._rt_file_mtime = _get_mtime(cfg.rds_rt_file)
-                    else:
-                        tx.enable_mpx(enabled)
-                except Exception as retry_exc:  # noqa: BLE001
-                    raise ValidationError(str(retry_exc)) from retry_exc
-            self._broadcasting = enabled
-            self._broadcast_since = time.monotonic() if enabled else 0.0
+                raise ValidationError(str(exc)) from exc
+
+            self._broadcasting = actual_state
+            self._broadcast_since = time.monotonic() if actual_state else 0.0
             if cfg:
                 if enabled and cfg.monitor_health:
                     try:
-                        transmitting = tx.is_transmitting()
                         LOGGER.debug(
                             "Broadcast request complete: requested=%s transmitting=%s",
                             enabled,
-                            transmitting,
+                            actual_state,
                         )
-                        if not transmitting:
+                        if not actual_state:
                             LOGGER.warning(
                                 "Broadcast state mismatch after request; attempting recovery"
                             )
@@ -643,8 +517,10 @@ class TransmitterManager:
                                 )
                             LOGGER.info("Recovery succeeded; re-applying configuration")
                             self._apply_config_on_backend(tx, cfg)
-                            self._broadcasting = True
-                            self._broadcast_since = time.monotonic()
+                            self._broadcasting = bool(tx.is_transmitting())
+                            self._broadcast_since = (
+                                time.monotonic() if self._broadcasting else 0.0
+                            )
                     except ValidationError:
                         raise
                     except Exception as exc:  # noqa: BLE001
@@ -699,57 +575,32 @@ class TransmitterManager:
             raise ValidationError("Path escapes configuration directory")
         return path
 
+    def _hardware_factory(self):
+        if HardwareSI4713 is None:
+            raise ValidationError("Transmitter hardware unavailable")
+        return HardwareSI4713()
+
     def _ensure_tx(self):
         if self._tx is not None:
             return self._tx
 
-        candidates = []
-        if not self._prefer_virtual and HardwareSI4713 is not None:
-            candidates.append(("hardware", HardwareSI4713))
-        candidates.append(("virtual", VirtualSI4713))
-
-        last_error: Optional[Exception] = None
-        for backend, impl in candidates:
-            try:
-                tx = impl()  # type: ignore[operator]
-                if not tx.init(RESET_PIN, REFCLK_HZ):
-                    raise RuntimeError("initialisation failed")
-            except Exception as exc:  # noqa: BLE001
-                LOGGER.exception(
-                    "Failed to initialise %s SI4713 backend: %s", backend, exc
-                )
-                last_error = exc
-                continue
-
-            self._tx = tx
-            self._tx_backend = backend
-            return tx
-
-        raise ValidationError("Transmitter hardware unavailable") from last_error
-
-    def _switch_to_virtual_backend(self, reason: str) -> Optional[Any]:
-        if isinstance(self._tx, VirtualSI4713):
-            return self._tx
-
-        LOGGER.warning("Switching to virtual SI4713 backend (%s)", reason)
-
-        tx = self._tx
-        if tx is not None:
-            try:
-                tx.close()
-            except Exception:  # noqa: BLE001
-                LOGGER.exception("Failed to close hardware transmitter")
-
-        virtual = VirtualSI4713()
         try:
-            virtual.init(RESET_PIN, REFCLK_HZ)
+            tx = self._tx_factory()
+        except ValidationError:
+            raise
         except Exception as exc:  # noqa: BLE001
-            LOGGER.exception("Virtual SI4713 initialisation failed: %s", exc)
-            return None
+            raise ValidationError(f"Failed to construct SI4713: {exc}") from exc
 
-        self._tx = virtual
-        self._tx_backend = "virtual"
-        return virtual
+        try:
+            initialised = tx.init(RESET_PIN, REFCLK_HZ)
+        except Exception as exc:  # noqa: BLE001
+            raise ValidationError(str(exc)) from exc
+
+        if not initialised:
+            raise ValidationError("SI4713 initialisation failed")
+
+        self._tx = tx
+        return tx
 
     def _apply_config_on_backend(self, tx: Any, cfg: AppConfig) -> None:
         self._rt_state, self._rt_source, self._rotation_idx, self._next_rotation = (
