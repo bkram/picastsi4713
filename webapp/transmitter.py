@@ -618,63 +618,74 @@ class TransmitterManager:
 
     def _watchdog_loop(self) -> None:
         while not self._stop_event.is_set():
+            interval = 0.5
             with self._lock:
                 cfg = self._config
                 tx = self._tx
                 broadcast_since = self._broadcast_since
                 broadcasting = self._broadcasting
-            if not cfg or tx is None:
-                time.sleep(0.5)
-                continue
 
-            interval = max(0.1, cfg.health_interval_s)
-            self._metrics.watchdog_active = True
-            self._metrics.watchdog_status = "running" if broadcasting else "paused"
-
-            try:
-                status = tx.tx_status()
-                if status:
-                    freq_10khz, power_level, overmod, _ = status
-                    self._metrics.frequency_khz = freq_10khz * 10
-                    self._metrics.power = power_level
-                    self._metrics.overmodulation = overmod
-                    self._metrics.broadcasting = broadcasting and power_level > 0
+                if not cfg or tx is None:
+                    self._metrics.watchdog_active = False
+                    self._metrics.watchdog_status = "idle"
                     self._metrics.last_updated = time.time()
-                    LOGGER.debug(
-                        "Watchdog metrics: freq=%.2fMHz power=%s overmod=%s broadcasting=%s",
-                        self._metrics.frequency_khz / 1000.0,
-                        power_level,
-                        overmod,
-                        broadcasting,
-                    )
+                    self._publisher.broadcast(self._metrics.to_dict())
                 else:
-                    self._metrics.broadcasting = False
-            except Exception as exc:  # noqa: BLE001
-                LOGGER.exception("Failed to read transmitter status: %s", exc)
-
-            self._publisher.broadcast(self._metrics.to_dict())
-
-            try:
-                self._maybe_reload_config(cfg, tx)
-                self._maybe_refresh_rt(cfg, tx)
-                if (
-                    cfg.monitor_health
-                    and broadcasting
-                    and self._health_window_open(broadcast_since, cfg)
-                    and not tx.is_transmitting()
-                ):
-                    LOGGER.warning(
-                        "Watchdog detected stopped transmission; attempting recovery"
+                    interval = max(0.1, cfg.health_interval_s)
+                    self._metrics.watchdog_active = True
+                    self._metrics.watchdog_status = (
+                        "running" if broadcasting else "paused"
                     )
-                    self._metrics.watchdog_status = "recovering"
-                    recovered = recover_tx(tx, cfg)
-                    self._metrics.watchdog_status = "running" if recovered else "failed"
-                    LOGGER.info(
-                        "Watchdog recovery %s",
-                        "succeeded" if recovered else "failed",
-                    )
-            except Exception:  # noqa: BLE001
-                LOGGER.exception("Watchdog loop error")
+
+                    try:
+                        status = tx.tx_status()
+                        if status:
+                            freq_10khz, power_level, overmod, _ = status
+                            self._metrics.frequency_khz = freq_10khz * 10
+                            self._metrics.power = power_level
+                            self._metrics.overmodulation = overmod
+                            self._metrics.broadcasting = (
+                                broadcasting and power_level > 0
+                            )
+                            self._metrics.last_updated = time.time()
+                            LOGGER.debug(
+                                "Watchdog metrics: freq=%.2fMHz power=%s overmod=%s broadcasting=%s",
+                                self._metrics.frequency_khz / 1000.0,
+                                power_level,
+                                overmod,
+                                broadcasting,
+                            )
+                        else:
+                            self._metrics.broadcasting = False
+                    except Exception as exc:  # noqa: BLE001
+                        LOGGER.exception("Failed to read transmitter status: %s", exc)
+
+                    try:
+                        self._maybe_reload_config(cfg, tx)
+                        cfg = self._config or cfg
+                        self._maybe_refresh_rt(cfg, tx)
+                        if (
+                            cfg.monitor_health
+                            and broadcasting
+                            and self._health_window_open(broadcast_since, cfg)
+                            and not tx.is_transmitting()
+                        ):
+                            LOGGER.warning(
+                                "Watchdog detected stopped transmission; attempting recovery"
+                            )
+                            self._metrics.watchdog_status = "recovering"
+                            recovered = recover_tx(tx, cfg)
+                            self._metrics.watchdog_status = (
+                                "running" if recovered else "failed"
+                            )
+                            LOGGER.info(
+                                "Watchdog recovery %s",
+                                "succeeded" if recovered else "failed",
+                            )
+                    except Exception:  # noqa: BLE001
+                        LOGGER.exception("Watchdog loop error")
+
+                    self._publisher.broadcast(self._metrics.to_dict())
 
             time.sleep(interval)
 
