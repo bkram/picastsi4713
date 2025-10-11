@@ -32,7 +32,10 @@ const piInput = document.getElementById('rds-pi');
 const audioPresetSelect = document.getElementById('audio-preset');
 const audioPresetReset = document.getElementById('audio-preset-reset');
 
-const tabButtons = Array.from(document.querySelectorAll('.tab-nav__link'));
+const monitorIntervalInput = document.getElementById('monitor-interval');
+const monitorIntervalPreview = document.getElementById('monitor-interval-readonly');
+
+const tabButtons = Array.from(document.querySelectorAll('.tab-rail__tab'));
 const tabPanels = Array.from(document.querySelectorAll('.tab-panel'));
 
 const AUDIO_PRESETS = {
@@ -116,12 +119,35 @@ tabButtons.forEach((button, index) => {
   });
 
   button.addEventListener('keydown', (event) => {
-    if (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft') {
+    if (event.key === 'Home') {
+      event.preventDefault();
+      tabButtons[0].focus();
+      activateTab(tabButtons[0].dataset.tab);
+      return;
+    }
+
+    if (event.key === 'End') {
+      event.preventDefault();
+      const last = tabButtons[tabButtons.length - 1];
+      last.focus();
+      activateTab(last.dataset.tab);
+      return;
+    }
+
+    const forwardKeys = ['ArrowRight', 'ArrowDown'];
+    const backwardKeys = ['ArrowLeft', 'ArrowUp'];
+    let offset = 0;
+    if (forwardKeys.includes(event.key)) {
+      offset = 1;
+    } else if (backwardKeys.includes(event.key)) {
+      offset = -1;
+    }
+
+    if (offset === 0) {
       return;
     }
 
     event.preventDefault();
-    const offset = event.key === 'ArrowRight' ? 1 : -1;
     const nextIndex = (index + offset + tabButtons.length) % tabButtons.length;
     const nextButton = tabButtons[nextIndex];
     nextButton.focus();
@@ -430,6 +456,27 @@ function markDirty() {
   isDirty = true;
 }
 
+function syncMonitorIntervalPreview() {
+  if (!monitorIntervalPreview || !monitorIntervalInput) {
+    return;
+  }
+
+  const raw = monitorIntervalInput.value;
+  const trimmed = typeof raw === 'string' ? raw.trim() : '';
+  if (!trimmed) {
+    monitorIntervalPreview.textContent = '—';
+    return;
+  }
+
+  const numeric = Number(trimmed);
+  if (Number.isFinite(numeric)) {
+    const decimals = Math.abs(numeric % 1) < 1e-6 ? 0 : 1;
+    monitorIntervalPreview.textContent = `${numeric.toFixed(decimals)} s`;
+  } else {
+    monitorIntervalPreview.textContent = trimmed;
+  }
+}
+
 function setFormEnabled(enabled) {
   formEnabled = enabled;
   configFields.disabled = !enabled;
@@ -457,6 +504,7 @@ function clearForm() {
   renderList(rtTextsList, [], 'Radiotext line');
   renderList(skipWordsList, [], 'word to skip');
   setAudioPresetSelection(null);
+  syncMonitorIntervalPreview();
   suspendDirty = false;
 }
 
@@ -586,11 +634,13 @@ function updateStatus(data) {
 async function fetchStatus() {
   try {
     const res = await fetch('/api/status');
-    if (!res.ok) return;
+    if (!res.ok) return null;
     const data = await res.json();
     updateStatus(data);
+    return data;
   } catch (error) {
     console.error('Failed to fetch status', error);
+    return null;
   }
 }
 
@@ -613,9 +663,9 @@ function subscribeEvents() {
 async function refreshConfigs() {
   try {
     const res = await fetch('/api/configs');
-    if (!res.ok) return;
+    if (!res.ok) return null;
     const data = await res.json();
-    if (!data.items) return;
+    if (!data.items) return data;
     const previous = configSelect.value || currentConfig;
     configSelect.innerHTML = '<option value="">Select configuration…</option>';
     for (const item of data.items) {
@@ -629,11 +679,12 @@ async function refreshConfigs() {
       currentConfig = previous;
     }
     if (!initialConfigLoaded && currentConfig && data.items.includes(currentConfig)) {
-      loadConfig(currentConfig);
-      initialConfigLoaded = true;
+      await loadConfig(currentConfig);
     }
+    return data;
   } catch (error) {
     console.error('Failed to refresh configs', error);
+    return null;
   }
 }
 
@@ -708,6 +759,7 @@ function populateForm(config) {
   document.getElementById('monitor-interval').value = monitor.interval_s ?? '';
   document.getElementById('monitor-recovery-attempts').value = monitor.recovery_attempts ?? '';
   document.getElementById('monitor-recovery-backoff').value = monitor.recovery_backoff_s ?? '';
+  syncMonitorIntervalPreview();
 
   suspendDirty = false;
   isDirty = false;
@@ -753,7 +805,7 @@ function collectFormData() {
     monitor: {
       health: document.getElementById('monitor-health').checked,
       asq: document.getElementById('monitor-asq').checked,
-      interval_s: document.getElementById('monitor-interval').value.trim(),
+      interval_s: monitorIntervalInput ? monitorIntervalInput.value.trim() : '',
       recovery_attempts: document.getElementById('monitor-recovery-attempts').value.trim(),
       recovery_backoff_s: document.getElementById('monitor-recovery-backoff').value.trim(),
     },
@@ -881,6 +933,10 @@ async function toggleBroadcasting(enabled) {
 configFields.addEventListener('input', markDirty);
 configFields.addEventListener('change', markDirty);
 
+if (monitorIntervalInput) {
+  monitorIntervalInput.addEventListener('input', syncMonitorIntervalPreview);
+}
+
 piInput.addEventListener('input', () => {
   const sanitized = sanitizePiDigits(piInput.value);
   if (sanitized !== piInput.value) {
@@ -960,7 +1016,19 @@ if (audioPresetReset) {
   });
 }
 
-clearForm();
-fetchStatus();
-refreshConfigs();
-subscribeEvents();
+async function bootstrap() {
+  clearForm();
+  const statusPromise = fetchStatus();
+  const configsPromise = refreshConfigs();
+  const status = await statusPromise;
+  await configsPromise;
+
+  if (!initialConfigLoaded && status?.config_name) {
+    currentConfig = status.config_name;
+    await loadConfig(status.config_name);
+  }
+
+  subscribeEvents();
+}
+
+bootstrap();

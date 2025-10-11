@@ -14,14 +14,6 @@
       <div class="app-bar__subtitle">Responsive FM + RDS control surface</div>
     </header>
     <main class="page">
-      <nav class="tab-nav" role="tablist" aria-label="Dashboard sections">
-        <button type="button" class="tab-nav__link is-active" id="tab-button-overview" role="tab" aria-selected="true" data-tab="overview" aria-controls="tab-overview">Overview</button>
-        <button type="button" class="tab-nav__link" id="tab-button-profiles" role="tab" aria-selected="false" data-tab="profiles" aria-controls="tab-profiles">Profiles</button>
-        <button type="button" class="tab-nav__link" id="tab-button-rf" role="tab" aria-selected="false" data-tab="rf" aria-controls="tab-rf">RF</button>
-        <button type="button" class="tab-nav__link" id="tab-button-audio" role="tab" aria-selected="false" data-tab="audio" aria-controls="tab-audio">Audio</button>
-        <button type="button" class="tab-nav__link" id="tab-button-rds-ps" role="tab" aria-selected="false" data-tab="rds-ps" aria-controls="tab-rds-ps">RDS PS</button>
-        <button type="button" class="tab-nav__link" id="tab-button-rds-rt" role="tab" aria-selected="false" data-tab="rds-rt" aria-controls="tab-rds-rt">RDS RT</button>
-      </nav>
       {% set di_flags = [
         ("di-stereo", "Stereo"),
         ("di-artificial-head", "Artificial Head"),
@@ -34,130 +26,125 @@
         ("rds-ms-music", "Music Service")
       ] %}
 
-      <section class="card card--hero tab-panel is-active" data-tab-panel="overview" id="tab-overview" role="tabpanel" aria-labelledby="tab-button-overview">
-        <header class="card__header">
-          <div>
-            <h1 class="card__title">Live Broadcast Snapshot</h1>
-            <p class="card__subtitle">Real-time metrics from the SI4713 transmitter</p>
-          </div>
-          <span class="status-pill status-pill--off" id="status-broadcast">OFF</span>
-        </header>
-        <div class="card__body card__body--hero">
-          <div class="hero-primary">
-            <div class="metric">
-              <div class="metric__label">Program Service</div>
-              <div class="metric__value" id="metric-ps">—</div>
-            </div>
-            <div class="metric">
-              <div class="metric__label">Radiotext</div>
-              <div class="metric__value" id="metric-rt">—</div>
-            </div>
-            <div class="metric-group">
-              <div class="metric">
-                <div class="metric__label">Frequency</div>
-                <div class="metric__value metric__value--secondary" id="metric-frequency">—</div>
-              </div>
-              <div class="metric">
-                <div class="metric__label">Power / Capacitance</div>
-                <div class="metric__value metric__value--secondary">
-                  <span id="metric-power">—</span>
-                  <span class="metric__suffix">dBµV</span>
-                  <span class="metric__separator">·</span>
-                  <span id="metric-cap">—</span>
+      <div class="workspace">
+        <aside class="workspace__nav">
+          <nav class="tab-rail" role="tablist" aria-label="Dashboard sections">
+            <button type="button" class="tab-rail__tab is-active" id="tab-button-overview" role="tab" aria-selected="true" data-tab="overview" aria-controls="tab-overview">
+              <span class="tab-rail__label">Overview</span>
+            </button>
+            <button type="button" class="tab-rail__tab" id="tab-button-rf" role="tab" aria-selected="false" data-tab="rf" aria-controls="tab-rf">
+              <span class="tab-rail__label">RF</span>
+            </button>
+            <button type="button" class="tab-rail__tab" id="tab-button-audio" role="tab" aria-selected="false" data-tab="audio" aria-controls="tab-audio">
+              <span class="tab-rail__label">Audio</span>
+            </button>
+            <button type="button" class="tab-rail__tab" id="tab-button-rds-ps" role="tab" aria-selected="false" data-tab="rds-ps" aria-controls="tab-rds-ps">
+              <span class="tab-rail__label">RDS PS</span>
+            </button>
+            <button type="button" class="tab-rail__tab" id="tab-button-rds-rt" role="tab" aria-selected="false" data-tab="rds-rt" aria-controls="tab-rds-rt">
+              <span class="tab-rail__label">RDS RT</span>
+            </button>
+          </nav>
+        </aside>
+
+        <form id="config-form" class="workspace__body pure-form pure-form-stacked">
+          <div class="workspace__main">
+            <section class="tab-panel is-active" data-tab-panel="overview" id="tab-overview" role="tabpanel" aria-labelledby="tab-button-overview">
+              <section class="card card--hero">
+                <header class="card__header">
+                  <div>
+                    <h1 class="card__title">Live Broadcast Snapshot</h1>
+                    <p class="card__subtitle">Real-time metrics from the SI4713 transmitter</p>
+                  </div>
+                  <span class="status-pill status-pill--off" id="status-broadcast">OFF</span>
+                </header>
+                <div class="card__body card__body--hero">
+                  <div class="hero-primary">
+                    <div class="metric">
+                      <div class="metric__label">Program Service</div>
+                      <div class="metric__value" id="metric-ps">—</div>
+                    </div>
+                    <div class="metric">
+                      <div class="metric__label">Radiotext</div>
+                      <div class="metric__value" id="metric-rt">—</div>
+                    </div>
+                    <div class="metric-group">
+                      <div class="metric">
+                        <div class="metric__label">Frequency</div>
+                        <div class="metric__value metric__value--secondary" id="metric-frequency">—</div>
+                      </div>
+                      <div class="metric">
+                        <div class="metric__label">Power / Capacitance</div>
+                        <div class="metric__value metric__value--secondary">
+                          <span id="metric-power">—</span>
+                          <span class="metric__suffix">dBµV</span>
+                          <span class="metric__separator">·</span>
+                          <span id="metric-cap">—</span>
+                        </div>
+                      </div>
+                      <div class="metric metric--stacked">
+                        <div class="metric__label">Audio Input</div>
+                        <div class="metric__value metric__value--secondary" id="metric-audio-level">—</div>
+                        <div class="metric__meta metric__meta--status" id="metric-audio-status">Limiter idle</div>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="hero-rds">
+                    <div class="metric-pair">
+                      <div class="metric">
+                        <div class="metric__label">PI Code</div>
+                        <div class="metric__value metric__value--mono" id="metric-rds-pi">—</div>
+                      </div>
+                      <div class="metric">
+                        <div class="metric__label">Program Type (PTY)</div>
+                        <div class="metric__value metric__value--mono" id="metric-rds-pty">—</div>
+                      </div>
+                    </div>
+                    <div>
+                      <div class="metric__label">RDS Flags</div>
+                      <div class="chip-row" id="metric-rds-flags">
+                        <span class="chip chip--inactive">—</span>
+                      </div>
+                    </div>
+                    <div>
+                      <div class="metric__label">Program Service Rotation</div>
+                      <div class="chip-row" id="metric-rds-ps">—</div>
+                      <div class="metric__meta is-hidden" id="metric-rds-ps-meta"></div>
+                    </div>
+                  </div>
+                  <div class="hero-footer">
+                    <div class="notice notice--warning is-hidden" id="metric-overmod">
+                      Over modulation detected. Reduce input gain or deviation.
+                    </div>
+                    <div class="hero-footer__status">
+                      <div>
+                        <div class="metric__label">Watchdog</div>
+                        <div class="metric__value metric__value--secondary" id="metric-watchdog">—</div>
+                      </div>
+                      <div class="broadcast-toggle">
+                        <label class="toggle" aria-label="Broadcast toggle">
+                          <input type="checkbox" id="toggle-broadcast">
+                          <span class="toggle__slider"></span>
+                        </label>
+                        <span class="toggle__label">Broadcast</span>
+                      </div>
+                    </div>
+                  </div>
                 </div>
-              </div>
-              <div class="metric metric--stacked">
-                <div class="metric__label">Audio Input</div>
-                <div class="metric__value metric__value--secondary" id="metric-audio-level">—</div>
-                <div class="metric__meta metric__meta--status" id="metric-audio-status">Limiter idle</div>
-              </div>
-            </div>
-          </div>
-          <div class="hero-rds">
-            <div class="metric-pair">
-              <div class="metric">
-                <div class="metric__label">PI Code</div>
-                <div class="metric__value metric__value--mono" id="metric-rds-pi">—</div>
-              </div>
-              <div class="metric">
-                <div class="metric__label">Program Type (PTY)</div>
-                <div class="metric__value metric__value--mono" id="metric-rds-pty">—</div>
-              </div>
-            </div>
-            <div>
-              <div class="metric__label">RDS Flags</div>
-              <div class="chip-row" id="metric-rds-flags">
-                <span class="chip chip--inactive">—</span>
-              </div>
-            </div>
-            <div>
-              <div class="metric__label">Program Service Rotation</div>
-              <div class="chip-row" id="metric-rds-ps">—</div>
-              <div class="metric__meta is-hidden" id="metric-rds-ps-meta"></div>
-            </div>
-          </div>
-          <div class="hero-footer">
-            <div class="notice notice--warning is-hidden" id="metric-overmod">
-              Over modulation detected. Reduce input gain or deviation.
-            </div>
-            <div class="hero-footer__status">
-              <div>
-                <div class="metric__label">Watchdog</div>
-                <div class="metric__value metric__value--secondary" id="metric-watchdog">—</div>
-              </div>
-              <div class="broadcast-toggle">
-                <label class="toggle" aria-label="Broadcast toggle">
-                  <input type="checkbox" id="toggle-broadcast">
-                  <span class="toggle__slider"></span>
-                </label>
-                <span class="toggle__label">Broadcast</span>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
+              </section>
+            </section>
 
-      <form id="config-form" class="pure-form pure-form-stacked">
-        <div class="tab-panel" data-tab-panel="profiles" id="tab-profiles" role="tabpanel" aria-labelledby="tab-button-profiles" hidden>
-          <section class="card card--profiles">
-            <header class="card__header">
-              <div>
-                <h2 class="card__title">Configuration Profiles</h2>
-                <p class="card__subtitle">Load, edit, and save transmitter profiles</p>
-              </div>
-            </header>
-            <div class="card__body">
-              <label for="config-select" class="form-label">Available Profiles</label>
-              <div class="input-row">
-                <select id="config-select" class="pure-input-1">
-                  <option value="">Select configuration…</option>
-                  {% for item in configs %}
-                    <option value="{{ item }}">{{ item }}</option>
-                  {% endfor %}
-                </select>
-                <button class="pure-button" id="btn-refresh" type="button">Refresh</button>
-              </div>
-              <div class="button-row">
-                <button class="pure-button" id="btn-duplicate" type="button" disabled>Duplicate</button>
-                <div class="button-row__spacer"></div>
-                <button class="pure-button" id="btn-save" type="button" disabled>Save</button>
-                <button class="pure-button pure-button-primary" id="btn-apply" type="button" disabled>Apply &amp; Activate</button>
-              </div>
-            </div>
-          </section>
-        </div>
-
-        <fieldset id="config-fields" class="config-fieldset" disabled>
-          <div class="tab-panel" data-tab-panel="rf" id="tab-rf" role="tabpanel" aria-labelledby="tab-button-rf" hidden>
-            <div class="pure-g config-grid">
-              <div class="pure-u-1 config-column">
-                <section class="card card--form">
-                  <header class="card__header">
-                    <h3 class="card__title">RF &amp; Monitoring</h3>
-                  </header>
-                  <div class="card__body card__body--compact">
-                    <div class="card__section">
-                      <h4 class="section-title">Carrier</h4>
+            <fieldset id="config-fields" class="config-fieldset" disabled>
+              <div class="tab-panel" data-tab-panel="rf" id="tab-rf" role="tabpanel" aria-labelledby="tab-button-rf" hidden>
+                <div class="panel-grid">
+                  <section class="card card--form">
+                    <header class="card__header">
+                      <div>
+                        <h3 class="card__title">Carrier</h3>
+                        <p class="card__subtitle">Set the transmission frequency and modulation power</p>
+                      </div>
+                    </header>
+                    <div class="card__body card__body--compact">
                       <div class="form-grid form-grid--two">
                         <div class="form-field">
                           <label for="rf-frequency">Frequency (MHz)</label>
@@ -167,14 +154,28 @@
                           <label for="rf-power">Power (dBµV)</label>
                           <input type="number" id="rf-power" class="pure-input-1" min="88" max="120">
                         </div>
+                      </div>
+                      <div class="form-grid form-grid--two">
                         <div class="form-field">
                           <label for="rf-antenna">Antenna Capacitance</label>
                           <input type="number" id="rf-antenna" class="pure-input-1" min="0" max="255">
                         </div>
+                        <div class="form-field">
+                          <label for="monitor-interval">Telemetry Interval (s)</label>
+                          <input type="number" id="monitor-interval" class="pure-input-1" min="0.1" step="0.1">
+                        </div>
                       </div>
                     </div>
-                    <div class="card__section card__section--bordered">
-                      <h4 class="section-title">Watchdog</h4>
+                  </section>
+
+                  <section class="card card--form">
+                    <header class="card__header">
+                      <div>
+                        <h3 class="card__title">Watchdog Monitoring</h3>
+                        <p class="card__subtitle">Choose the hardware signals to supervise</p>
+                      </div>
+                    </header>
+                    <div class="card__body card__body--compact">
                       <div class="form-options form-options--two">
                         <label class="checkbox form-checkbox">
                           <input type="checkbox" id="monitor-health">
@@ -185,94 +186,115 @@
                           <span>ASQ Monitoring</span>
                         </label>
                       </div>
+                      <p class="input-hint">The watchdog resets the transmitter and reapplies the active profile whenever these checks fail.</p>
+                    </div>
+                  </section>
+
+                  <section class="card card--form">
+                    <header class="card__header">
+                      <div>
+                        <h3 class="card__title">Recovery Strategy</h3>
+                        <p class="card__subtitle">Configure how aggressively the watchdog tries to restore service</p>
+                      </div>
+                    </header>
+                    <div class="card__body card__body--compact">
                       <div class="form-grid form-grid--three">
-                        <div class="form-field">
-                          <label for="monitor-interval">Interval (s)</label>
-                          <input type="number" id="monitor-interval" class="pure-input-1" min="0.1" step="0.1">
-                        </div>
                         <div class="form-field">
                           <label for="monitor-recovery-attempts">Recovery Attempts</label>
                           <input type="number" id="monitor-recovery-attempts" class="pure-input-1" min="0">
                         </div>
                         <div class="form-field">
-                          <label for="monitor-recovery-backoff">Recovery Backoff (s)</label>
+                          <label for="monitor-recovery-backoff">Backoff (s)</label>
                           <input type="number" id="monitor-recovery-backoff" class="pure-input-1" min="0" step="0.1">
+                        </div>
+                        <div class="form-field">
+                          <label for="monitor-interval-readonly">Status Interval (preview)</label>
+                          <output id="monitor-interval-readonly" for="monitor-interval">—</output>
                         </div>
                       </div>
                     </div>
-                  </div>
-                </section>
-              </div>
-            </div>
-          </div>
-
-          <div class="tab-panel" data-tab-panel="audio" id="tab-audio" role="tabpanel" aria-labelledby="tab-button-audio" hidden>
-            <section class="card card--form">
-              <header class="card__header">
-                <h3 class="card__title">Audio Processing</h3>
-              </header>
-              <div class="card__body card__body--compact">
-                <div class="card__section">
-                  <h4 class="section-title">Limiter Presets</h4>
-                  <div class="preset-row">
-                    <select id="audio-preset" class="pure-input-1">
-                      <option value="">Select preset…</option>
-                      <option value="broadcast">Broadcast reference (–16 dBFS)</option>
-                      <option value="music">Music – Smooth</option>
-                      <option value="voice">Speech – Articulate</option>
-                    </select>
-                    <button type="button" class="pure-button pure-button-secondary" id="audio-preset-reset">
-                      Reset to preset
-                    </button>
-                  </div>
-                  <span class="input-hint">Presets follow the Silicon Labs limiter guidance; use them to recover from clipping.</span>
-                </div>
-                <div class="form-options form-options--two">
-                  <label class="checkbox form-checkbox">
-                    <input type="checkbox" id="audio-agc">
-                    <span>Automatic Gain Control (AGC)</span>
-                  </label>
-                  <label class="checkbox form-checkbox">
-                    <input type="checkbox" id="audio-limiter">
-                    <span>Limiter Enabled</span>
-                  </label>
-                </div>
-                <div class="form-grid form-grid--three">
-                  <div class="form-field">
-                    <label for="audio-comp-thr">Compressor Threshold (dB)</label>
-                    <input type="number" id="audio-comp-thr" class="pure-input-1" min="-96" max="31">
-                  </div>
-                  <div class="form-field">
-                    <label for="audio-comp-att">Attack (index)</label>
-                    <input type="number" id="audio-comp-att" class="pure-input-1" min="0" max="63">
-                  </div>
-                  <div class="form-field">
-                    <label for="audio-comp-rel">Release (index)</label>
-                    <input type="number" id="audio-comp-rel" class="pure-input-1" min="0" max="63">
-                  </div>
-                  <div class="form-field">
-                    <label for="audio-comp-gain">Gain (dB)</label>
-                    <input type="number" id="audio-comp-gain" class="pure-input-1" min="0" max="63">
-                  </div>
-                  <div class="form-field">
-                    <label for="audio-lim-rel">Limiter Release (index)</label>
-                    <input type="number" id="audio-lim-rel" class="pure-input-1" min="0" max="1023">
-                  </div>
+                  </section>
                 </div>
               </div>
-            </section>
-          </div>
 
-          <div class="tab-panel" data-tab-panel="rds-ps" id="tab-rds-ps" role="tabpanel" aria-labelledby="tab-button-rds-ps" hidden>
-            <div class="pure-g config-grid">
-              <div class="pure-u-1 pure-u-lg-1-2 config-column">
-                <section class="card card--form">
-                  <header class="card__header">
-                    <h3 class="card__title">RDS Identity &amp; Flags</h3>
-                  </header>
-                  <div class="card__body card__body--compact">
-                    <div class="card__section">
-                      <h4 class="section-title">Core Identity</h4>
+              <div class="tab-panel" data-tab-panel="audio" id="tab-audio" role="tabpanel" aria-labelledby="tab-button-audio" hidden>
+                <div class="panel-grid">
+                  <section class="card card--form">
+                    <header class="card__header">
+                      <div>
+                        <h3 class="card__title">Processing Presets</h3>
+                        <p class="card__subtitle">Quickly recover a known-good limiter profile</p>
+                      </div>
+                    </header>
+                    <div class="card__body card__body--compact">
+                      <div class="preset-row">
+                        <select id="audio-preset" class="pure-input-1">
+                          <option value="">Select preset…</option>
+                          <option value="broadcast">Broadcast reference (–16 dBFS)</option>
+                          <option value="music">Music – Smooth</option>
+                          <option value="voice">Speech – Articulate</option>
+                        </select>
+                        <button type="button" class="pure-button pure-button-secondary" id="audio-preset-reset">Reset to preset</button>
+                      </div>
+                      <p class="input-hint">Presets follow Silicon Labs guidance and reapply limiter, compressor, and gain defaults.</p>
+                    </div>
+                  </section>
+
+                  <section class="card card--form">
+                    <header class="card__header">
+                      <div>
+                        <h3 class="card__title">Dynamics &amp; Limiter</h3>
+                        <p class="card__subtitle">Fine-tune the compressor and protection stages</p>
+                      </div>
+                    </header>
+                    <div class="card__body card__body--compact">
+                      <div class="form-options form-options--two">
+                        <label class="checkbox form-checkbox">
+                          <input type="checkbox" id="audio-agc">
+                          <span>Automatic Gain Control (AGC)</span>
+                        </label>
+                        <label class="checkbox form-checkbox">
+                          <input type="checkbox" id="audio-limiter">
+                          <span>Limiter Enabled</span>
+                        </label>
+                      </div>
+                      <div class="form-grid form-grid--three">
+                        <div class="form-field">
+                          <label for="audio-comp-thr">Compressor Threshold (dB)</label>
+                          <input type="number" id="audio-comp-thr" class="pure-input-1" min="-96" max="31">
+                        </div>
+                        <div class="form-field">
+                          <label for="audio-comp-att">Attack (index)</label>
+                          <input type="number" id="audio-comp-att" class="pure-input-1" min="0" max="63">
+                        </div>
+                        <div class="form-field">
+                          <label for="audio-comp-rel">Release (index)</label>
+                          <input type="number" id="audio-comp-rel" class="pure-input-1" min="0" max="63">
+                        </div>
+                        <div class="form-field">
+                          <label for="audio-comp-gain">Gain (dB)</label>
+                          <input type="number" id="audio-comp-gain" class="pure-input-1" min="0" max="63">
+                        </div>
+                        <div class="form-field">
+                          <label for="audio-lim-rel">Limiter Release (index)</label>
+                          <input type="number" id="audio-lim-rel" class="pure-input-1" min="0" max="1023">
+                        </div>
+                      </div>
+                    </div>
+                  </section>
+                </div>
+              </div>
+
+              <div class="tab-panel" data-tab-panel="rds-ps" id="tab-rds-ps" role="tabpanel" aria-labelledby="tab-button-rds-ps" hidden>
+                <div class="panel-grid">
+                  <section class="card card--form">
+                    <header class="card__header">
+                      <div>
+                        <h3 class="card__title">RDS Identity</h3>
+                        <p class="card__subtitle">Configure PI, PTY, and deviation before enabling PS rotation</p>
+                      </div>
+                    </header>
+                    <div class="card__body card__body--compact">
                       <div class="form-grid form-grid--three">
                         <div class="form-field">
                           <label for="rds-pi">PI Code</label>
@@ -300,9 +322,6 @@
                           <input type="number" id="rds-deviation" class="pure-input-1" min="0">
                         </div>
                       </div>
-                    </div>
-                    <div class="card__section card__section--bordered">
-                      <h4 class="section-title">Programme Flags</h4>
                       <div class="form-options form-options--two">
                         {% for field_id, label in rds_flag_switches %}
                           <label class="checkbox form-checkbox">
@@ -323,109 +342,162 @@
                         </div>
                       </div>
                     </div>
-                  </div>
-                </section>
-              </div>
-              <div class="pure-u-1 pure-u-lg-1-2 config-column">
-                <section class="card card--form">
-                  <header class="card__header">
-                    <h3 class="card__title">Program Service Slots</h3>
-                  </header>
-                  <div class="card__body card__body--compact">
-                    <div class="section-header">
-                      <label class="form-label" for="ps-list">PS Slots</label>
-                      <button type="button" class="pure-button pure-button-secondary" id="btn-add-ps">Add Slot</button>
-                    </div>
-                    <div id="ps-list" class="stack"></div>
-                    <div class="form-grid form-grid--three">
-                      <div class="form-field">
-                        <label for="rds-ps-count">Active Slots</label>
-                        <input type="number" id="rds-ps-count" class="pure-input-1" min="1" max="8">
+                  </section>
+
+                  <section class="card card--form">
+                    <header class="card__header">
+                      <div>
+                        <h3 class="card__title">Program Service Slots</h3>
+                        <p class="card__subtitle">Curate the rotation and presentation of PS text</p>
                       </div>
-                      <div class="form-field">
-                        <label for="rds-ps-speed">Cycle Speed (s)</label>
-                        <input type="number" id="rds-ps-speed" class="pure-input-1" min="1">
+                    </header>
+                    <div class="card__body card__body--compact">
+                      <div class="section-header">
+                        <label class="form-label" for="ps-list">PS Slots</label>
+                        <button type="button" class="pure-button pure-button-secondary" id="btn-add-ps">Add Slot</button>
                       </div>
-                      <label class="checkbox form-checkbox form-checkbox--inline">
-                        <input type="checkbox" id="rds-ps-center">
-                        <span>Center text</span>
-                      </label>
+                      <div id="ps-list" class="stack"></div>
+                      <div class="form-grid form-grid--three">
+                        <div class="form-field">
+                          <label for="rds-ps-count">Active Slots</label>
+                          <input type="number" id="rds-ps-count" class="pure-input-1" min="1" max="8">
+                        </div>
+                        <div class="form-field">
+                          <label for="rds-ps-speed">Cycle Speed (s)</label>
+                          <input type="number" id="rds-ps-speed" class="pure-input-1" min="1">
+                        </div>
+                        <label class="checkbox form-checkbox form-checkbox--inline">
+                          <input type="checkbox" id="rds-ps-center">
+                          <span>Center text</span>
+                        </label>
+                      </div>
                     </div>
-                  </div>
-                </section>
+                  </section>
+                </div>
               </div>
-            </div>
+
+              <div class="tab-panel" data-tab-panel="rds-rt" id="tab-rds-rt" role="tabpanel" aria-labelledby="tab-button-rds-rt" hidden>
+                <div class="panel-grid">
+                  <section class="card card--form">
+                    <header class="card__header">
+                      <div>
+                        <h3 class="card__title">Radiotext Defaults</h3>
+                        <p class="card__subtitle">Set fallback messaging and timing for RT</p>
+                      </div>
+                    </header>
+                    <div class="card__body card__body--compact">
+                      <div class="form-grid form-grid--two">
+                        <div class="form-field form-field--span-2">
+                          <label for="rt-text">Fallback Text</label>
+                          <input type="text" id="rt-text" class="pure-input-1" maxlength="64">
+                        </div>
+                        <div class="form-field">
+                          <label for="rt-speed">Rotation Speed (s)</label>
+                          <input type="number" id="rt-speed" class="pure-input-1" min="1" step="0.1">
+                        </div>
+                        <label class="checkbox form-checkbox form-checkbox--inline">
+                          <input type="checkbox" id="rt-center">
+                          <span>Center text</span>
+                        </label>
+                        <div class="form-field">
+                          <label for="rt-ab-mode">A/B Mode</label>
+                          <select id="rt-ab-mode" class="pure-input-1">
+                            <option value="auto">Auto</option>
+                            <option value="legacy">Legacy</option>
+                            <option value="bank">Bank</option>
+                          </select>
+                        </div>
+                      </div>
+                    </div>
+                  </section>
+
+                  <section class="card card--form">
+                    <header class="card__header">
+                      <div>
+                        <h3 class="card__title">Rotation Entries</h3>
+                        <p class="card__subtitle">Build the playlist that scrolls to receivers</p>
+                      </div>
+                    </header>
+                    <div class="card__body card__body--compact">
+                      <div class="section-header">
+                        <label class="form-label" for="rt-texts-list">Rotation Entries</label>
+                        <button type="button" class="pure-button pure-button-secondary" id="btn-add-rt-text">Add Entry</button>
+                      </div>
+                      <div id="rt-texts-list" class="stack"></div>
+                    </div>
+                  </section>
+
+                  <section class="card card--form">
+                    <header class="card__header">
+                      <div>
+                        <h3 class="card__title">Automation</h3>
+                        <p class="card__subtitle">Integrate scripts and fine-tune burst behaviour</p>
+                      </div>
+                    </header>
+                    <div class="card__body card__body--compact">
+                      <div class="form-field">
+                        <label for="rt-file-path">External Script File</label>
+                        <input type="text" id="rt-file-path" class="pure-input-1" placeholder="/path/to/rt.txt">
+                        <span class="input-hint">Leave blank to disable file sourcing.</span>
+                      </div>
+                      <div class="section-header">
+                        <label class="form-label" for="rt-skip-words-list">Skip Words</label>
+                        <button type="button" class="pure-button pure-button-secondary" id="btn-add-skip-word">Add Word</button>
+                      </div>
+                      <div id="rt-skip-words-list" class="stack"></div>
+                      <div class="form-grid form-grid--three">
+                        <div class="form-field">
+                          <label for="rt-repeats">Burst Repeats</label>
+                          <input type="number" id="rt-repeats" class="pure-input-1" min="1">
+                        </div>
+                        <div class="form-field">
+                          <label for="rt-gap">Burst Gap (ms)</label>
+                          <input type="number" id="rt-gap" class="pure-input-1" min="0">
+                        </div>
+                        <div class="form-field">
+                          <label for="rt-bank">Bank (0/1)</label>
+                          <input type="number" id="rt-bank" class="pure-input-1" min="0" max="1">
+                        </div>
+                      </div>
+                    </div>
+                  </section>
+                </div>
+              </div>
+            </fieldset>
           </div>
 
-          <div class="tab-panel" data-tab-panel="rds-rt" id="tab-rds-rt" role="tabpanel" aria-labelledby="tab-button-rds-rt" hidden>
-            <section class="card card--form">
+          <aside class="workspace__profiles">
+            <section class="card card--profiles">
               <header class="card__header">
-                <h3 class="card__title">Radiotext Rotation</h3>
+                <div>
+                  <h2 class="card__title">Configuration Profiles</h2>
+                  <p class="card__subtitle">Select and manage saved transmitter setups</p>
+                </div>
               </header>
               <div class="card__body card__body--compact">
-                <div class="form-grid form-grid--two">
-                  <div class="form-field form-field--span-2">
-                    <label for="rt-text">Fallback Text</label>
-                    <input type="text" id="rt-text" class="pure-input-1" maxlength="64">
-                  </div>
-                  <div class="form-field">
-                    <label for="rt-speed">Rotation Speed (s)</label>
-                    <input type="number" id="rt-speed" class="pure-input-1" min="1" step="0.1">
-                  </div>
-                  <label class="checkbox form-checkbox form-checkbox--inline">
-                    <input type="checkbox" id="rt-center">
-                    <span>Center text</span>
-                  </label>
+                <label for="config-select" class="form-label">Available Profiles</label>
+                <div class="input-row">
+                  <select id="config-select" class="pure-input-1">
+                    <option value="">Select configuration…</option>
+                    {% for item in configs %}
+                      <option value="{{ item }}">{{ item }}</option>
+                    {% endfor %}
+                  </select>
+                  <button class="pure-button" id="btn-refresh" type="button">Refresh</button>
                 </div>
-                <div class="card__section">
-                  <div class="section-header">
-                    <label class="form-label" for="rt-texts-list">Rotation Entries</label>
-                    <button type="button" class="pure-button pure-button-secondary" id="btn-add-rt-text">Add Entry</button>
-                  </div>
-                  <div id="rt-texts-list" class="stack"></div>
-                </div>
-                <div class="form-field">
-                  <label for="rt-file-path">External Script File</label>
-                  <input type="text" id="rt-file-path" class="pure-input-1" placeholder="/path/to/rt.txt">
-                  <span class="input-hint">Leave blank to disable file sourcing.</span>
-                </div>
-                <div class="card__section">
-                  <div class="section-header">
-                    <label class="form-label" for="rt-skip-words-list">Skip Words</label>
-                    <button type="button" class="pure-button pure-button-secondary" id="btn-add-skip-word">Add Word</button>
-                  </div>
-                  <div id="rt-skip-words-list" class="stack"></div>
-                </div>
-                <div class="form-grid form-grid--four">
-                  <div class="form-field">
-                    <label for="rt-ab-mode">A/B Mode</label>
-                    <select id="rt-ab-mode" class="pure-input-1">
-                      <option value="auto">Auto</option>
-                      <option value="legacy">Legacy</option>
-                      <option value="bank">Bank</option>
-                    </select>
-                  </div>
-                  <div class="form-field">
-                    <label for="rt-repeats">Burst Repeats</label>
-                    <input type="number" id="rt-repeats" class="pure-input-1" min="1">
-                  </div>
-                  <div class="form-field">
-                    <label for="rt-gap">Burst Gap (ms)</label>
-                    <input type="number" id="rt-gap" class="pure-input-1" min="0">
-                  </div>
-                  <div class="form-field">
-                    <label for="rt-bank">Bank (0/1)</label>
-                    <input type="number" id="rt-bank" class="pure-input-1" min="0" max="1">
-                  </div>
+                <div class="button-column">
+                  <button class="pure-button" id="btn-duplicate" type="button" disabled>Duplicate</button>
+                  <button class="pure-button" id="btn-save" type="button" disabled>Save</button>
+                  <button class="pure-button pure-button-primary" id="btn-apply" type="button" disabled>Apply &amp; Activate</button>
                 </div>
               </div>
             </section>
-          </div>
-        </fieldset>
-      </form>
+          </aside>
+        </form>
+      </div>
 
       <div class="notice notice--inline is-hidden" role="alert" id="config-feedback"></div>
-    </main>
-    <script src="{{ url_for('static', filename='js/main.js') }}" defer></script>
-  </body>
-</html>
+     </main>
+     <script src="{{ url_for('static', filename='js/main.js') }}" defer></script>
+   </body>
+ </html>
