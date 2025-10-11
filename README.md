@@ -65,23 +65,22 @@ profiles and watch telemetry from a browser. To start it locally:
    > only requires `Flask`; the remaining packages let the CLI and
    > watchdog talk to real SI4713 hardware when present.
 
-3. Run the development server:
+3. Launch the dashboard with the bundled helper script:
 
    ```bash
-   python -m flask --app webapp:create_app --debug run
+   python run_dashboard.py --debug
    ```
 
-   By default the web interface reads configuration profiles from
-   `cfg/`. Point it at a different directory by exporting
-   `FLASK_APP=webapp:create_app` once and launching with:
+   The script mirrors the environment variables used by `flask run`, so
+   you can change the bind address, port, and configuration root either
+   via CLI flags or the matching env vars:
 
    ```bash
-   FLASK_RUN_HOST=0.0.0.0 FLASK_RUN_PORT=5000 CONFIG_ROOT=/path/to/cfg \
-     python -m flask run
+   python run_dashboard.py --host 0.0.0.0 --port 5000 --config-root /path/to/cfg
    ```
 
-   This will bind the server to all interfaces for LAN access and load
-   configurations from the specified folder.
+   When `--debug` is omitted the server runs in production mode with the
+   reloader disabled.
 
 4. Open http://127.0.0.1:5000 in a browser to access the dashboard.
 
