@@ -501,6 +501,7 @@ class TransmitterManager:
 
     def apply_config(self, name: Path) -> Dict[str, Any]:
         path = self._resolve_path(name)
+        LOGGER.info("Applying configuration from %s", path)
         if not path.exists():
             raise FileNotFoundError(str(path))
 
@@ -514,7 +515,11 @@ class TransmitterManager:
             self._config_path = path
             self._config_mtime = _get_mtime(str(path))
             try:
+                LOGGER.debug(
+                    "Pushing configuration to %s backend", self._tx_backend
+                )
                 self._apply_config_on_backend(tx, cfg)
+                LOGGER.debug("Configuration applied successfully")
             except Exception as exc:  # noqa: BLE001
                 LOGGER.exception(
                     "Failed to apply configuration using %s backend", self._tx_backend
@@ -526,7 +531,9 @@ class TransmitterManager:
                     raise ValidationError(str(exc)) from exc
                 tx = fallback
                 try:
+                    LOGGER.debug("Retrying configuration using virtual backend")
                     self._apply_config_on_backend(tx, cfg)
+                    LOGGER.debug("Configuration applied on virtual backend")
                 except Exception as retry_exc:  # noqa: BLE001
                     LOGGER.exception("Failed to apply configuration on virtual backend")
                     raise ValidationError(str(retry_exc)) from retry_exc
@@ -538,12 +545,18 @@ class TransmitterManager:
 
             if cfg.monitor_health:
                 try:
-                    if tx.is_transmitting():
+                    transmitting = tx.is_transmitting()
+                    LOGGER.debug(
+                        "Post-apply health check: backend=%s transmitting=%s",
+                        self._tx_backend,
+                        transmitting,
+                    )
+                    if transmitting:
                         LOGGER.info(
                             "TX is up at %.2f MHz", cfg.frequency_khz / 1000.0
                         )
                     else:
-                        LOGGER.error("TX not running after setup")
+                        LOGGER.warning("TX not running after setup; attempting recovery")
                         if not recover_tx(tx, cfg):
                             self._broadcasting = False
                             self._broadcast_since = 0.0
@@ -554,6 +567,7 @@ class TransmitterManager:
                                 "Transmitter failed to start after recovery attempts"
                             )
                         # recover_tx reapplies config; resync internal state
+                        LOGGER.info("Recovery succeeded; re-applying configuration")
                         self._apply_config_on_backend(tx, cfg)
                         self._broadcast_since = time.monotonic()
                         self._update_metrics(cfg, broadcasting=True)
@@ -581,6 +595,11 @@ class TransmitterManager:
                 tx = self._tx
                 if tx is None:
                     raise ValidationError("Transmitter not initialised")
+            LOGGER.info(
+                "Setting broadcast %s (backend=%s)",
+                "ON" if enabled else "OFF",
+                self._tx_backend,
+            )
             try:
                 tx.enable_mpx(enabled)
             except Exception as exc:  # noqa: BLE001
@@ -603,8 +622,16 @@ class TransmitterManager:
             if cfg:
                 if enabled and cfg.monitor_health:
                     try:
-                        if not tx.is_transmitting():
-                            LOGGER.error("TX not running after enabling broadcast")
+                        transmitting = tx.is_transmitting()
+                        LOGGER.debug(
+                            "Broadcast request complete: requested=%s transmitting=%s",
+                            enabled,
+                            transmitting,
+                        )
+                        if not transmitting:
+                            LOGGER.warning(
+                                "Broadcast state mismatch after request; attempting recovery"
+                            )
                             if not recover_tx(tx, cfg):
                                 self._broadcasting = False
                                 self._broadcast_since = 0.0
@@ -614,6 +641,7 @@ class TransmitterManager:
                                 raise ValidationError(
                                     "Transmitter failed to start after recovery attempts"
                                 )
+                            LOGGER.info("Recovery succeeded; re-applying configuration")
                             self._apply_config_on_backend(tx, cfg)
                             self._broadcasting = True
                             self._broadcast_since = time.monotonic()
@@ -761,6 +789,13 @@ class TransmitterManager:
                     self._metrics.overmodulation = overmod
                     self._metrics.broadcasting = broadcasting and power_level > 0
                     self._metrics.last_updated = time.time()
+                    LOGGER.debug(
+                        "Watchdog metrics: freq=%.2fMHz power=%s overmod=%s broadcasting=%s",
+                        self._metrics.frequency_khz / 1000.0,
+                        power_level,
+                        overmod,
+                        broadcasting,
+                    )
                 else:
                     self._metrics.broadcasting = False
             except Exception as exc:  # noqa: BLE001
@@ -777,9 +812,16 @@ class TransmitterManager:
                     and self._health_window_open(broadcast_since, cfg)
                     and not tx.is_transmitting()
                 ):
+                    LOGGER.warning(
+                        "Watchdog detected stopped transmission; attempting recovery"
+                    )
                     self._metrics.watchdog_status = "recovering"
                     recovered = recover_tx(tx, cfg)
                     self._metrics.watchdog_status = "running" if recovered else "failed"
+                    LOGGER.info(
+                        "Watchdog recovery %s",
+                        "succeeded" if recovered else "failed",
+                    )
             except Exception:  # noqa: BLE001
                 LOGGER.exception("Watchdog loop error")
 
@@ -848,7 +890,15 @@ class TransmitterManager:
         if since <= 0.0:
             return True
         grace = max(cfg.health_interval_s * 3, 1.0)
-        return time.monotonic() - since >= grace
+        elapsed = time.monotonic() - since
+        window_open = elapsed >= grace
+        LOGGER.debug(
+            "Health window check: since=%.3fs grace=%.3fs open=%s",
+            elapsed,
+            grace,
+            window_open,
+        )
+        return window_open
 
     def _update_metrics(self, cfg: AppConfig, broadcasting: bool) -> None:
         self._metrics.ps = cfg.rds_ps[0] if cfg.rds_ps else ""
