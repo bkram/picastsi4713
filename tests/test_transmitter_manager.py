@@ -382,10 +382,11 @@ def test_toggle_broadcast_cycle(manager: TransmitterManager, tmp_path: Path) -> 
 
     status = manager.set_broadcast(False)
     assert status["broadcasting"] is False
-    assert status["watchdog_status"] == "paused"
+    assert status["watchdog_status"] == "stopped"
     assert status["rds"]["enabled"] is False
     assert status["audio_input_dbfs"] is None
     assert status["audio"]["limiter_on"] is True
+    assert manager._tx is None  # type: ignore[attr-defined]
 
     status = manager.set_broadcast(True)
     assert status["broadcasting"] is True
