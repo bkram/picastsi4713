@@ -32,6 +32,9 @@ const piInput = document.getElementById('rds-pi');
 const audioPresetSelect = document.getElementById('audio-preset');
 const audioPresetReset = document.getElementById('audio-preset-reset');
 
+const tabButtons = Array.from(document.querySelectorAll('.tab-nav__link'));
+const tabPanels = Array.from(document.querySelectorAll('.tab-panel'));
+
 const AUDIO_PRESETS = {
   broadcast: {
     label: 'Broadcast reference (–16 dBFS)',
@@ -87,10 +90,76 @@ let currentConfig = '';
 let isDirty = false;
 let formEnabled = false;
 let suspendDirty = false;
+let initialConfigLoaded = false;
+
+function activateTab(name) {
+  if (!name) {
+    return;
+  }
+
+  tabButtons.forEach((button) => {
+    const isActive = button.dataset.tab === name;
+    button.classList.toggle('is-active', isActive);
+    button.setAttribute('aria-selected', String(isActive));
+  });
+
+  tabPanels.forEach((panel) => {
+    const isActive = panel.dataset.tabPanel === name;
+    panel.classList.toggle('is-active', isActive);
+    panel.toggleAttribute('hidden', !isActive);
+  });
+}
+
+tabButtons.forEach((button, index) => {
+  button.addEventListener('click', () => {
+    activateTab(button.dataset.tab);
+  });
+
+  button.addEventListener('keydown', (event) => {
+    if (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft') {
+      return;
+    }
+
+    event.preventDefault();
+    const offset = event.key === 'ArrowRight' ? 1 : -1;
+    const nextIndex = (index + offset + tabButtons.length) % tabButtons.length;
+    const nextButton = tabButtons[nextIndex];
+    nextButton.focus();
+    activateTab(nextButton.dataset.tab);
+  });
+});
+
+activateTab('overview');
 
 function formatFrequency(khz) {
-  if (!khz) return '—';
-  return `${(khz / 1000).toFixed(3)} MHz`;
+  const numeric = Number(khz);
+  if (!Number.isFinite(numeric) || numeric <= 0) {
+    return '—';
+  }
+  return `${(numeric / 1000).toFixed(2)} MHz`;
+}
+
+function fromKhzToMHz(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) {
+    return '';
+  }
+  return (numeric / 1000).toFixed(2);
+}
+
+function toKhzFromMHz(raw) {
+  if (raw === null || raw === undefined) {
+    return '';
+  }
+  const trimmed = String(raw).trim();
+  if (!trimmed) {
+    return '';
+  }
+  const numeric = Number(trimmed);
+  if (!Number.isFinite(numeric)) {
+    return trimmed;
+  }
+  return Math.round(numeric * 1000).toString();
 }
 
 function sanitizePiDigits(raw) {
@@ -500,9 +569,17 @@ function updateStatus(data) {
   toggleBroadcast.checked = broadcasting;
   toggleBroadcast.disabled = !data.config_name;
 
-  if (data.config_name && !currentConfig) {
-    currentConfig = data.config_name;
-    configSelect.value = currentConfig;
+  if (data.config_name) {
+    if (!currentConfig) {
+      currentConfig = data.config_name;
+    }
+    if (configSelect && configSelect.value !== data.config_name) {
+      configSelect.value = data.config_name;
+    }
+    if (!initialConfigLoaded && currentConfig === data.config_name) {
+      initialConfigLoaded = true;
+      loadConfig(currentConfig);
+    }
   }
 }
 
@@ -539,7 +616,7 @@ async function refreshConfigs() {
     if (!res.ok) return;
     const data = await res.json();
     if (!data.items) return;
-    const previous = configSelect.value;
+    const previous = configSelect.value || currentConfig;
     configSelect.innerHTML = '<option value="">Select configuration…</option>';
     for (const item of data.items) {
       const option = document.createElement('option');
@@ -549,6 +626,11 @@ async function refreshConfigs() {
     }
     if (previous && data.items.includes(previous)) {
       configSelect.value = previous;
+      currentConfig = previous;
+    }
+    if (!initialConfigLoaded && currentConfig && data.items.includes(currentConfig)) {
+      loadConfig(currentConfig);
+      initialConfigLoaded = true;
     }
   } catch (error) {
     console.error('Failed to refresh configs', error);
@@ -569,7 +651,9 @@ function showFeedback(message, type = 'success') {
 
 function populateForm(config) {
   suspendDirty = true;
-  document.getElementById('rf-frequency').value = config.rf?.frequency_khz ?? '';
+  document.getElementById('rf-frequency').value = fromKhzToMHz(
+    config.rf?.frequency_khz
+  );
   document.getElementById('rf-power').value = config.rf?.power ?? '';
   document.getElementById('rf-antenna').value = config.rf?.antenna_cap ?? '';
 
@@ -632,7 +716,7 @@ function populateForm(config) {
 function collectFormData() {
   return {
     rf: {
-      frequency_khz: document.getElementById('rf-frequency').value.trim(),
+      frequency_khz: toKhzFromMHz(document.getElementById('rf-frequency').value),
       power: document.getElementById('rf-power').value.trim(),
       antenna_cap: document.getElementById('rf-antenna').value.trim(),
     },
@@ -700,8 +784,12 @@ async function loadConfig(name) {
     saveBtn.disabled = false;
     applyBtn.disabled = false;
     duplicateBtn.disabled = false;
+    initialConfigLoaded = true;
   } catch (error) {
     console.error('Failed to load config', error);
+    if (name === currentConfig) {
+      initialConfigLoaded = false;
+    }
   }
 }
 

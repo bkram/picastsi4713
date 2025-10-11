@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import queue
+import re
 import threading
 import time
 from dataclasses import dataclass, field
@@ -39,6 +40,19 @@ from picast4713 import (
 )
 
 LOGGER = logging.getLogger(__name__)
+
+
+class _HexString(str):
+    """String wrapper to emit plain hex scalars in YAML output."""
+
+
+def _hexstring_representer(dumper: "yaml.Dumper", data: "_HexString"):
+    return dumper.represent_scalar("tag:yaml.org,2002:str", data, style="")
+
+
+yaml.SafeDumper.add_representer(_HexString, _hexstring_representer)
+
+_MISSING = object()
 
 
 class ValidationError(Exception):
@@ -158,6 +172,13 @@ class TransmitterManager:
         self._metrics = Metrics()
         self._publisher = MetricsPublisher()
         self._watchdog_thread: Optional[threading.Thread] = None
+        self._config_applied = False
+        self._state_path = self.config_root / ".session-state.json"
+        self._session_state = {
+            "last_profile": None,
+            "broadcast_enabled": False,
+        }
+        self._load_session_state()
 
     # ---------------------- public API ----------------------
 
@@ -215,6 +236,11 @@ class TransmitterManager:
     def write_config_struct(self, name: Path, payload: Dict[str, Any]) -> None:
         normalized = self._normalize_struct(payload)
         text = yaml.safe_dump(normalized, sort_keys=False)
+        text = re.sub(
+            r"(pi:\s*)'0x([0-9A-Fa-f]+)'",
+            lambda match: f"{match.group(1)}0x{match.group(2)}",
+            text,
+        )
         self.write_config(name, text)
 
     def _serialize_config(self, cfg: AppConfig) -> Dict[str, Any]:
@@ -433,7 +459,7 @@ class TransmitterManager:
             "rf": serialized["rf"],
             "audio": serialized["audio"],
             "rds": {
-                "pi": f"0x{serialized['rds']['pi']:04X}",
+                "pi": _HexString(f"0x{serialized['rds']['pi']:04X}"),
                 "pty": serialized["rds"]["pty"],
                 "tp": serialized["rds"]["tp"],
                 "ta": serialized["rds"]["ta"],
@@ -510,14 +536,23 @@ class TransmitterManager:
                             raise ValidationError(
                                 "Transmitter failed to start after recovery attempts"
                             )
+                        self._broadcasting = True
+                        self._broadcast_since = time.monotonic()
+                        self._update_metrics(cfg, broadcasting=True)
                         # recover_tx reapplies config; resync internal state
                         LOGGER.info("Recovery succeeded; re-applying configuration")
                         self._apply_config_on_backend(tx, cfg)
-                        self._broadcasting = bool(tx.is_transmitting())
+                        actual_state = bool(tx.is_transmitting())
+                        if not actual_state:
+                            LOGGER.debug(
+                                "Recover routine did not report TX active; assuming ON"
+                            )
+                            actual_state = self._broadcasting or True
+                        self._broadcasting = actual_state
                         self._broadcast_since = (
-                            time.monotonic() if self._broadcasting else 0.0
+                            time.monotonic() if actual_state else 0.0
                         )
-                        self._update_metrics(cfg, broadcasting=self._broadcasting)
+                        self._update_metrics(cfg, broadcasting=actual_state)
                 except ValidationError:
                     raise
                 except Exception as exc:  # noqa: BLE001
@@ -529,6 +564,10 @@ class TransmitterManager:
                     raise ValidationError(str(exc)) from exc
 
             self._ensure_watchdog()
+            relative_name = str(path.relative_to(self.config_root))
+            self._update_session_state(
+                last_profile=relative_name, broadcast=self._broadcasting
+            )
         return self.current_status()
 
     def set_broadcast(self, enabled: bool) -> Dict[str, Any]:
@@ -538,6 +577,13 @@ class TransmitterManager:
                 if not cfg or self._config_path is None:
                     raise ValidationError("Apply a configuration before enabling broadcast")
                 tx = self._ensure_tx()
+                if not self._config_applied:
+                    try:
+                        LOGGER.info("Reapplying configuration before enabling broadcast")
+                        self._apply_config_on_backend(tx, cfg)
+                    except Exception as exc:  # noqa: BLE001
+                        LOGGER.exception("Failed to reapply configuration")
+                        raise ValidationError(str(exc)) from exc
             else:
                 tx = self._tx
                 if tx is None:
@@ -556,6 +602,8 @@ class TransmitterManager:
                 self._audio_overmod = False
                 self._status_overmod = False
                 self._metrics.audio_input_dbfs = None
+                if not enabled:
+                    self._teardown_tx()
             if cfg:
                 if enabled and cfg.monitor_health:
                     try:
@@ -597,13 +645,14 @@ class TransmitterManager:
                 self._update_metrics(cfg, self._broadcasting)
             else:
                 self._metrics.broadcasting = enabled
-                self._metrics.watchdog_status = "running" if enabled else "paused"
+                self._metrics.watchdog_status = "running" if enabled else "stopped"
                 if not enabled:
                     self._metrics.audio_input_dbfs = None
                     self._metrics.audio = {}
                     self._status_overmod = False
                 self._metrics.last_updated = time.time()
                 self._publisher.broadcast(self._metrics.to_dict())
+        self._update_session_state(broadcast=self._broadcasting)
         return self.current_status()
 
     def current_status(self) -> Dict[str, Any]:
@@ -622,16 +671,94 @@ class TransmitterManager:
             self._watchdog_thread.join(timeout=1)
         with self._lock:
             if self._tx is not None:
-                try:
-                    self._tx.hw_reset(RESET_PIN)
-                except Exception:  # noqa: BLE001
-                    LOGGER.exception("Failed to reset transmitter during shutdown")
-                finally:
-                    try:
-                        self._tx.close()
-                    except Exception:  # noqa: BLE001
-                        LOGGER.exception("Failed to close transmitter")
-                self._tx = None
+                self._teardown_tx()
+
+    def restore_last_session(self) -> None:
+        state = dict(self._session_state)
+        profile_name = state.get("last_profile")
+        applied = False
+        if isinstance(profile_name, str) and profile_name.strip():
+            candidate = Path(profile_name.strip())
+            try:
+                self.apply_config(candidate)
+            except FileNotFoundError:
+                LOGGER.warning(
+                    "Saved profile %s is missing; clearing stored session", profile_name
+                )
+                self._update_session_state(last_profile=None, broadcast=False)
+            except ValidationError as exc:
+                LOGGER.warning(
+                    "Failed to restore configuration %s: %s", profile_name, exc
+                )
+            except Exception:  # noqa: BLE001
+                LOGGER.exception(
+                    "Unexpected error while restoring configuration %s", profile_name
+                )
+            else:
+                applied = True
+
+        if applied:
+            try:
+                self.set_broadcast(True)
+            except ValidationError as exc:
+                LOGGER.warning("Failed to resume broadcast automatically: %s", exc)
+            except Exception:  # noqa: BLE001
+                LOGGER.exception("Unexpected error while resuming broadcast")
+
+    def _load_session_state(self) -> None:
+        if not self._state_path.exists():
+            return
+        try:
+            raw = self._state_path.read_text(encoding="utf-8")
+            data = json.loads(raw) if raw.strip() else {}
+        except Exception:  # noqa: BLE001
+            LOGGER.warning("Unable to read session state from %s", self._state_path)
+            return
+        if not isinstance(data, dict):
+            return
+        last_profile = data.get("last_profile")
+        if isinstance(last_profile, str) and last_profile.strip():
+            self._session_state["last_profile"] = last_profile.strip()
+        broadcast = data.get("broadcast_enabled")
+        if isinstance(broadcast, bool):
+            self._session_state["broadcast_enabled"] = broadcast
+        elif broadcast is not None:
+            self._session_state["broadcast_enabled"] = bool(broadcast)
+
+    def _persist_session_state(self) -> None:
+        payload = {
+            "last_profile": self._session_state.get("last_profile"),
+            "broadcast_enabled": bool(self._session_state.get("broadcast_enabled")),
+        }
+        try:
+            self._state_path.parent.mkdir(parents=True, exist_ok=True)
+            self._state_path.write_text(
+                json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8"
+            )
+        except Exception:  # noqa: BLE001
+            LOGGER.exception("Failed to persist session state to %s", self._state_path)
+
+    def _update_session_state(
+        self,
+        *,
+        last_profile: Any = _MISSING,
+        broadcast: Any = _MISSING,
+    ) -> None:
+        changed = False
+        if last_profile is not _MISSING:
+            if isinstance(last_profile, Path):
+                stored = str(last_profile)
+            elif last_profile:
+                stored = str(last_profile)
+            else:
+                stored = None
+            self._session_state["last_profile"] = stored
+            changed = True
+        if broadcast is not _MISSING:
+            self._session_state["broadcast_enabled"] = bool(broadcast)
+            changed = True
+        if changed:
+            self._persist_session_state()
 
     # ---------------------- internal helpers ----------------------
 
@@ -666,6 +793,7 @@ class TransmitterManager:
             raise ValidationError("SI4713 initialisation failed")
 
         self._tx = tx
+        self._config_applied = False
         return tx
 
     def _apply_config_on_backend(self, tx: Any, cfg: AppConfig) -> None:
@@ -673,6 +801,22 @@ class TransmitterManager:
             apply_tx_config(tx, cfg)
         )
         self._configure_ps_slots(cfg)
+        self._config_applied = True
+
+    def _teardown_tx(self) -> None:
+        tx = self._tx
+        if tx is None:
+            return
+        try:
+            tx.hw_reset(RESET_PIN)
+        except Exception:  # noqa: BLE001
+            LOGGER.exception("Failed to reset transmitter during teardown")
+        try:
+            tx.close()
+        except Exception:  # noqa: BLE001
+            LOGGER.exception("Failed to close transmitter during teardown")
+        self._tx = None
+        self._config_applied = False
 
     def _ensure_watchdog(self) -> None:
         if self._watchdog_thread and self._watchdog_thread.is_alive():
@@ -692,7 +836,7 @@ class TransmitterManager:
                 broadcast_since = self._broadcast_since
                 broadcasting = self._broadcasting
 
-                if not cfg or tx is None:
+                if not cfg:
                     self._metrics.watchdog_active = False
                     self._metrics.watchdog_status = "idle"
                     self._metrics.audio_input_dbfs = None
@@ -700,11 +844,20 @@ class TransmitterManager:
                     self._status_overmod = False
                     self._metrics.last_updated = time.time()
                     self._publisher.broadcast(self._metrics.to_dict())
+                elif tx is None:
+                    self._metrics.watchdog_active = False
+                    self._metrics.watchdog_status = "stopped"
+                    self._metrics.audio_input_dbfs = None
+                    self._metrics.audio = {}
+                    self._status_overmod = False
+                    self._metrics.broadcasting = False
+                    self._metrics.last_updated = time.time()
+                    self._publisher.broadcast(self._metrics.to_dict())
                 else:
                     interval = max(0.1, cfg.health_interval_s)
                     self._metrics.watchdog_active = True
                     self._metrics.watchdog_status = (
-                        "running" if broadcasting else "paused"
+                        "running" if broadcasting else "stopped"
                     )
 
                     overmod_flag = False
@@ -925,7 +1078,7 @@ class TransmitterManager:
         self._metrics.antenna_cap = cfg.antenna_cap
         self._metrics.broadcasting = broadcasting
         self._metrics.watchdog_active = True
-        self._metrics.watchdog_status = "running" if broadcasting else "paused"
+        self._metrics.watchdog_status = "running" if broadcasting else "stopped"
         self._metrics.audio_input_dbfs = self._audio_level_dbfs
         self._metrics.audio = self._audio_snapshot(cfg)
         if broadcasting:

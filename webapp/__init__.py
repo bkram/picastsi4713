@@ -31,6 +31,11 @@ def create_app(config: dict[str, Any] | None = None) -> "Flask":
     app.transmitter_manager = manager  # type: ignore[attr-defined]
     app.register_blueprint(bp)
 
+    try:
+        manager.restore_last_session()
+    except Exception:  # noqa: BLE001
+        LOGGER.exception("Failed to restore last transmitter session")
+
     def _stop_manager() -> None:
         try:
             manager.shutdown()
