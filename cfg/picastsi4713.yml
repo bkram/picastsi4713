@@ -1,0 +1,42 @@
+rf:
+  frequency_khz: 108000 
+  power:  115
+  antenna_cap: 3
+rds:
+  pi: 0x1234
+  pty: 12
+  tp: false
+  ta: false
+  ms_music: true
+  di:
+    stereo: true
+    artificial_head: false
+    compressed: true
+    dynamic_pty: false
+  ps:
+    - "PICAST"
+    - "SI4713"
+  ps_center: true
+  ps_speed: 2
+  rt:
+    texts:
+      - "You are listening to"
+      - "PICAST SI4713"
+    speed_s: 10.0
+    center: false 
+    file_path: "./rt_file.txt"
+    skip_words: ["skip", "badword"]
+    force_flush: true
+    flush_cycles: 3
+    push_repeats: 6
+    push_gap_ms: 100
+    ab_mode: "legacy"
+    poll_seconds: 0.5
+monitor:
+  health: true
+  asq: true
+  interval_s: 1.0
+  recovery_attempts: 3
+  recovery_backoff_s: 0.5
+
+
