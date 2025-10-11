@@ -14,6 +14,11 @@
       <div class="app-bar__subtitle">Responsive FM + RDS control surface</div>
     </header>
     <main class="page">
+      <nav class="tab-nav" role="tablist" aria-label="Dashboard sections">
+        <button type="button" class="tab-nav__link is-active" id="tab-button-overview" role="tab" aria-selected="true" data-tab="overview" aria-controls="tab-overview">Overview</button>
+        <button type="button" class="tab-nav__link" id="tab-button-profiles" role="tab" aria-selected="false" data-tab="profiles" aria-controls="tab-profiles">Profiles</button>
+        <button type="button" class="tab-nav__link" id="tab-button-configuration" role="tab" aria-selected="false" data-tab="configuration" aria-controls="tab-configuration">Configuration</button>
+      </nav>
       {% set di_flags = [
         ("di-stereo", "Stereo"),
         ("di-artificial-head", "Artificial Head"),
@@ -26,7 +31,7 @@
         ("rds-ms-music", "Music Service")
       ] %}
 
-      <section class="card card--hero">
+      <section class="card card--hero tab-panel is-active" data-tab-panel="overview" id="tab-overview" role="tabpanel" aria-labelledby="tab-button-overview">
         <header class="card__header">
           <div>
             <h1 class="card__title">Live Broadcast Snapshot</h1>
@@ -110,34 +115,37 @@
       </section>
 
       <form id="config-form" class="pure-form pure-form-stacked">
-        <section class="card card--profiles">
-          <header class="card__header">
-            <div>
-              <h2 class="card__title">Configuration Profiles</h2>
-              <p class="card__subtitle">Load, edit, and save transmitter profiles</p>
+        <div class="tab-panel" data-tab-panel="profiles" id="tab-profiles" role="tabpanel" aria-labelledby="tab-button-profiles" hidden>
+          <section class="card card--profiles">
+            <header class="card__header">
+              <div>
+                <h2 class="card__title">Configuration Profiles</h2>
+                <p class="card__subtitle">Load, edit, and save transmitter profiles</p>
+              </div>
+            </header>
+            <div class="card__body">
+              <label for="config-select" class="form-label">Available Profiles</label>
+              <div class="input-row">
+                <select id="config-select" class="pure-input-1">
+                  <option value="">Select configuration…</option>
+                  {% for item in configs %}
+                    <option value="{{ item }}">{{ item }}</option>
+                  {% endfor %}
+                </select>
+                <button class="pure-button" id="btn-refresh" type="button">Refresh</button>
+              </div>
+              <div class="button-row">
+                <button class="pure-button" id="btn-duplicate" type="button" disabled>Duplicate</button>
+                <div class="button-row__spacer"></div>
+                <button class="pure-button" id="btn-save" type="button" disabled>Save</button>
+                <button class="pure-button pure-button-primary" id="btn-apply" type="button" disabled>Apply &amp; Activate</button>
+              </div>
             </div>
-          </header>
-          <div class="card__body">
-            <label for="config-select" class="form-label">Available Profiles</label>
-            <div class="input-row">
-              <select id="config-select" class="pure-input-1">
-                <option value="">Select configuration…</option>
-                {% for item in configs %}
-                  <option value="{{ item }}">{{ item }}</option>
-                {% endfor %}
-              </select>
-              <button class="pure-button" id="btn-refresh" type="button">Refresh</button>
-            </div>
-            <div class="button-row">
-              <button class="pure-button" id="btn-duplicate" type="button" disabled>Duplicate</button>
-              <div class="button-row__spacer"></div>
-              <button class="pure-button" id="btn-save" type="button" disabled>Save</button>
-              <button class="pure-button pure-button-primary" id="btn-apply" type="button" disabled>Apply &amp; Activate</button>
-            </div>
-          </div>
-        </section>
+          </section>
+        </div>
 
-        <fieldset id="config-fields" class="config-fieldset" disabled>
+        <div class="tab-panel" data-tab-panel="configuration" id="tab-configuration" role="tabpanel" aria-labelledby="tab-button-configuration" hidden>
+          <fieldset id="config-fields" class="config-fieldset" disabled>
           <div class="pure-g config-grid">
             <div class="pure-u-1 pure-u-lg-1-3 config-column">
               <section class="card card--form">
@@ -398,7 +406,8 @@
               </section>
             </div>
           </div>
-        </fieldset>
+          </fieldset>
+        </div>
       </form>
 
       <div class="notice notice--inline is-hidden" role="alert" id="config-feedback"></div>

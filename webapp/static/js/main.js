@@ -32,6 +32,9 @@ const piInput = document.getElementById('rds-pi');
 const audioPresetSelect = document.getElementById('audio-preset');
 const audioPresetReset = document.getElementById('audio-preset-reset');
 
+const tabButtons = Array.from(document.querySelectorAll('.tab-nav__link'));
+const tabPanels = Array.from(document.querySelectorAll('.tab-panel'));
+
 const AUDIO_PRESETS = {
   broadcast: {
     label: 'Broadcast reference (–16 dBFS)',
@@ -87,6 +90,45 @@ let currentConfig = '';
 let isDirty = false;
 let formEnabled = false;
 let suspendDirty = false;
+
+function activateTab(name) {
+  if (!name) {
+    return;
+  }
+
+  tabButtons.forEach((button) => {
+    const isActive = button.dataset.tab === name;
+    button.classList.toggle('is-active', isActive);
+    button.setAttribute('aria-selected', String(isActive));
+  });
+
+  tabPanels.forEach((panel) => {
+    const isActive = panel.dataset.tabPanel === name;
+    panel.classList.toggle('is-active', isActive);
+    panel.toggleAttribute('hidden', !isActive);
+  });
+}
+
+tabButtons.forEach((button, index) => {
+  button.addEventListener('click', () => {
+    activateTab(button.dataset.tab);
+  });
+
+  button.addEventListener('keydown', (event) => {
+    if (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft') {
+      return;
+    }
+
+    event.preventDefault();
+    const offset = event.key === 'ArrowRight' ? 1 : -1;
+    const nextIndex = (index + offset + tabButtons.length) % tabButtons.length;
+    const nextButton = tabButtons[nextIndex];
+    nextButton.focus();
+    activateTab(nextButton.dataset.tab);
+  });
+});
+
+activateTab('overview');
 
 function formatFrequency(khz) {
   const numeric = Number(khz);

@@ -57,6 +57,66 @@ body {
   gap: 2rem;
 }
 
+.tab-nav {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.5rem;
+  background: rgba(15, 23, 42, 0.04);
+  border-radius: 999px;
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(148, 163, 184, 0.4);
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.08);
+  width: fit-content;
+}
+
+.tab-nav__link {
+  border: none;
+  background: transparent;
+  padding: 0.45rem 1.1rem;
+  border-radius: 999px;
+  font-size: 0.95rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.tab-nav__link:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.tab-nav__link:hover {
+  color: var(--text);
+  background: rgba(37, 99, 235, 0.1);
+}
+
+.tab-nav__link.is-active {
+  background: var(--surface);
+  color: var(--accent);
+  box-shadow: 0 6px 16px rgba(37, 99, 235, 0.18);
+}
+
+.tab-panel[hidden] {
+  display: none;
+}
+
+.tab-panel.is-active {
+  animation: tabFade 0.24s ease;
+}
+
+@keyframes tabFade {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 .card {
   background: var(--surface);
   border-radius: var(--card-radius);
