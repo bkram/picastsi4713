@@ -1,7 +1,6 @@
 const broadcastBadge = document.getElementById('status-broadcast');
 const psEl = document.getElementById('metric-ps');
 const rtEl = document.getElementById('metric-rt');
-const rtSourceEl = document.getElementById('metric-rt-source');
 const freqEl = document.getElementById('metric-frequency');
 const powerEl = document.getElementById('metric-power');
 const capEl = document.getElementById('metric-cap');
@@ -106,10 +105,10 @@ function renderRdsFlags(container, rds) {
   container.innerHTML = '';
 
   if (!rds || Object.keys(rds).length === 0) {
-    const badge = document.createElement('span');
-    badge.className = 'badge rounded-pill text-bg-secondary';
-    badge.textContent = 'RDS Inactive';
-    container.append(badge);
+    const chip = document.createElement('span');
+    chip.className = 'chip chip--inactive';
+    chip.textContent = 'RDS Inactive';
+    container.append(chip);
     return;
   }
 
@@ -126,10 +125,10 @@ function renderRdsFlags(container, rds) {
   ];
 
   descriptors.forEach(({ label, active }) => {
-    const badge = document.createElement('span');
-    badge.className = `badge rounded-pill ${active ? 'text-bg-success' : 'text-bg-secondary'}`;
-    badge.textContent = label;
-    container.append(badge);
+    const chip = document.createElement('span');
+    chip.className = `chip ${active ? 'chip--active' : 'chip--inactive'}`;
+    chip.textContent = label;
+    container.append(chip);
   });
 }
 
@@ -137,7 +136,7 @@ function renderRdsPs(container, metaEl, rds) {
   container.innerHTML = '';
   if (metaEl) {
     metaEl.textContent = '';
-    metaEl.classList.add('d-none');
+    metaEl.classList.add('is-hidden');
   }
 
   const rawValues = Array.isArray(rds?.ps)
@@ -155,15 +154,15 @@ function renderRdsPs(container, metaEl, rds) {
   }
 
   values.forEach((value, index) => {
-    const badge = document.createElement('span');
+    const chip = document.createElement('span');
     const display = typeof value === 'string' ? value.trim() : '';
-    badge.className = 'badge rounded-pill text-bg-secondary';
-    badge.textContent = display || '—';
+    chip.className = 'chip chip--inactive';
+    chip.textContent = display || '—';
     if (index === activeIndex) {
-      badge.classList.remove('text-bg-secondary');
-      badge.classList.add('text-bg-primary', 'ps-active');
+      chip.classList.remove('chip--inactive');
+      chip.classList.add('chip--active');
     }
-    container.append(badge);
+    container.append(chip);
   });
 
   if (metaEl) {
@@ -182,7 +181,7 @@ function renderRdsPs(container, metaEl, rds) {
       parts.push(rds.ps_center ? 'Centered' : 'Left aligned');
     }
     metaEl.textContent = parts.join(' · ');
-    metaEl.classList.remove('d-none');
+    metaEl.classList.remove('is-hidden');
   }
 }
 
@@ -228,14 +227,14 @@ function createListItem(container, value, placeholder) {
 
   const input = document.createElement('input');
   input.type = 'text';
-  input.className = 'form-control';
+  input.className = 'pure-input-1';
   input.placeholder = placeholder;
   input.value = value || '';
   input.addEventListener('input', markDirty);
 
   const removeBtn = document.createElement('button');
   removeBtn.type = 'button';
-  removeBtn.className = 'btn btn-outline-secondary';
+  removeBtn.className = 'icon-button';
   removeBtn.innerHTML = '&times;';
   removeBtn.setAttribute('aria-label', 'Remove');
   removeBtn.addEventListener('click', () => {
@@ -267,11 +266,10 @@ function updateStatus(data) {
   const psValue = typeof data.ps === 'string' ? data.ps.trim() : data.ps;
   psEl.textContent = psValue && psValue.length ? psValue : '—';
   rtEl.textContent = data.rt || '—';
-  rtSourceEl.textContent = data.rt_source ? `Source: ${data.rt_source}` : 'Source: —';
   freqEl.textContent = formatFrequency(data.frequency_khz);
   powerEl.textContent = data.power ?? '—';
   capEl.textContent = data.antenna_cap ?? '—';
-  overmodEl.classList.toggle('d-none', !data.overmodulation);
+  overmodEl.classList.toggle('is-hidden', !data.overmodulation);
   watchdogEl.textContent = data.watchdog_status || '—';
   const rds = data.rds || {};
   if (rdsPiEl) {
@@ -295,9 +293,8 @@ function updateStatus(data) {
 
   const broadcasting = Boolean(data.broadcasting);
   broadcastBadge.textContent = broadcasting ? 'ON' : 'OFF';
-  broadcastBadge.dataset.state = broadcasting ? 'on' : 'off';
-  broadcastBadge.classList.toggle('bg-success', broadcasting);
-  broadcastBadge.classList.toggle('bg-secondary', !broadcasting);
+  broadcastBadge.classList.toggle('status-pill--on', broadcasting);
+  broadcastBadge.classList.toggle('status-pill--off', !broadcasting);
   toggleBroadcast.checked = broadcasting;
   toggleBroadcast.disabled = !data.config_name;
 
@@ -358,9 +355,14 @@ async function refreshConfigs() {
 
 function showFeedback(message, type = 'success') {
   feedback.textContent = message;
-  feedback.className = `alert alert-${type}`;
-  feedback.classList.remove('d-none');
-  setTimeout(() => feedback.classList.add('d-none'), 4000);
+  feedback.classList.remove('is-hidden', 'notice--success', 'notice--error');
+  feedback.classList.add('notice', 'notice--inline');
+  if (type === 'success') {
+    feedback.classList.add('notice--success');
+  } else {
+    feedback.classList.add('notice--error');
+  }
+  setTimeout(() => feedback.classList.add('is-hidden'), 4000);
 }
 
 function populateForm(config) {
