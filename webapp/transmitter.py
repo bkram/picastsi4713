@@ -29,6 +29,7 @@ from picast4713 import (
     REFCLK_HZ,
     _burst_rt,
     _get_mtime,
+    _ps_pairs,
     _resolve_file_rt,
     _resolve_rotation_rt,
     apply_config as apply_tx_config,
@@ -140,6 +141,9 @@ class TransmitterManager:
         self._rotation_idx: int = 0
         self._next_rotation: float = time.monotonic()
         self._rt_file_mtime: Optional[float] = None
+        self._ps_slots: List[str] = []
+        self._ps_index: int = 0
+        self._ps_next_tick: float = time.monotonic()
         self._broadcasting = False
         self._broadcast_since = 0.0
         self._lock = threading.RLock()
@@ -618,6 +622,7 @@ class TransmitterManager:
         self._rt_state, self._rt_source, self._rotation_idx, self._next_rotation = (
             apply_tx_config(tx, cfg)
         )
+        self._configure_ps_slots(cfg)
 
     def _ensure_watchdog(self) -> None:
         if self._watchdog_thread and self._watchdog_thread.is_alive():
@@ -676,6 +681,7 @@ class TransmitterManager:
                         self._maybe_reload_config(cfg, tx)
                         cfg = self._config or cfg
                         self._maybe_refresh_rt(cfg, tx)
+                        self._maybe_rotate_ps(cfg)
                         if (
                             cfg.monitor_health
                             and broadcasting
@@ -711,6 +717,8 @@ class TransmitterManager:
             rt_changed = reconfigure_live(tx, cfg, new_cfg)
             self._config = new_cfg
             self._config_mtime = mtime
+            self._configure_ps_slots(new_cfg)
+            self._metrics.ps = self._current_ps_display()
             self._metrics.frequency_khz = new_cfg.frequency_khz
             self._metrics.power = new_cfg.power
             self._metrics.antenna_cap = new_cfg.antenna_cap
@@ -757,10 +765,48 @@ class TransmitterManager:
         self._rt_source = source
         self._metrics.rt = candidate.strip()
         self._metrics.rt_source = source
-        self._metrics.ps = cfg.rds_ps[0] if cfg.rds_ps else ""
         self._metrics.rds = self._rds_snapshot(cfg, self._broadcasting)
         self._metrics.last_updated = time.time()
         self._publisher.broadcast(self._metrics.to_dict())
+
+    def _ps_interval(self, cfg: AppConfig) -> float:
+        return max(0.5, float(cfg.rds_ps_speed or 1))
+
+    def _configure_ps_slots(self, cfg: AppConfig) -> None:
+        pairs = _ps_pairs(cfg.rds_ps, center=cfg.rds_ps_center)
+        limit = max(0, cfg.rds_ps_count)
+        if limit:
+            pairs = pairs[: min(limit, len(pairs))]
+        slots = [text for text, _slot in pairs if text.strip()]
+        self._ps_slots = slots
+        self._ps_index = 0
+        if not self._ps_slots:
+            self._ps_next_tick = float("inf")
+            return
+        interval = self._ps_interval(cfg)
+        self._ps_next_tick = (
+            time.monotonic() + interval if len(self._ps_slots) > 1 else float("inf")
+        )
+
+    def _current_ps_display(self) -> str:
+        if not self._ps_slots:
+            return ""
+        index = min(self._ps_index, len(self._ps_slots) - 1)
+        if index < 0:
+            index = 0
+        return self._ps_slots[index].strip()
+
+    def _maybe_rotate_ps(self, cfg: AppConfig) -> None:
+        if not self._ps_slots or len(self._ps_slots) == 1:
+            return
+        now = time.monotonic()
+        if now < self._ps_next_tick:
+            return
+        self._ps_index = (self._ps_index + 1) % len(self._ps_slots)
+        self._ps_next_tick = now + self._ps_interval(cfg)
+        self._metrics.ps = self._current_ps_display()
+        self._metrics.rds = self._rds_snapshot(cfg, self._broadcasting)
+        self._metrics.last_updated = time.time()
 
     def _health_window_open(self, since: float, cfg: AppConfig) -> bool:
         if since <= 0.0:
@@ -777,7 +823,7 @@ class TransmitterManager:
         return window_open
 
     def _update_metrics(self, cfg: AppConfig, broadcasting: bool) -> None:
-        self._metrics.ps = cfg.rds_ps[0] if cfg.rds_ps else ""
+        self._metrics.ps = self._current_ps_display()
         self._metrics.rt = (self._rt_state or "").strip()
         self._metrics.rt_source = self._rt_source
         self._metrics.frequency_khz = cfg.frequency_khz
@@ -796,6 +842,8 @@ class TransmitterManager:
         self._publisher.broadcast(self._metrics.to_dict())
 
     def _rds_snapshot(self, cfg: AppConfig, broadcasting: bool) -> Dict[str, Any]:
+        active_index = self._ps_index if self._ps_slots else None
+        current_ps = self._current_ps_display()
         return {
             "enabled": broadcasting,
             "pi": f"0x{cfg.rds_pi:04X}",
@@ -804,6 +852,9 @@ class TransmitterManager:
             "ta": cfg.rds_ta,
             "ms_music": cfg.rds_ms_music,
             "ps": list(cfg.rds_ps),
+            "ps_formatted": list(self._ps_slots),
+            "ps_current": current_ps,
+            "ps_active_index": active_index,
             "ps_center": cfg.rds_ps_center,
             "ps_count": cfg.rds_ps_count,
             "ps_speed": cfg.rds_ps_speed,

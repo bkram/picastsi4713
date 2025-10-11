@@ -140,23 +140,41 @@ function renderRdsPs(container, metaEl, rds) {
     metaEl.classList.add('d-none');
   }
 
-  const values = Array.isArray(rds?.ps) ? rds.ps.filter((item) => item && item.trim().length > 0) : [];
+  const rawValues = Array.isArray(rds?.ps)
+    ? rds.ps.filter((item) => item && item.trim().length > 0)
+    : [];
+  const formattedValues = Array.isArray(rds?.ps_formatted) && rds.ps_formatted.length
+    ? rds.ps_formatted
+    : rawValues;
+  const values = formattedValues.length ? formattedValues : rawValues;
+  const activeIndex = Number.isFinite(rds?.ps_active_index) ? Number(rds.ps_active_index) : -1;
+
   if (!values.length) {
     container.textContent = '—';
     return;
   }
 
-  values.forEach((value) => {
+  values.forEach((value, index) => {
     const badge = document.createElement('span');
-    badge.className = 'badge rounded-pill text-bg-primary';
-    badge.textContent = value;
+    const display = typeof value === 'string' ? value.trim() : '';
+    badge.className = 'badge rounded-pill text-bg-secondary';
+    badge.textContent = display || '—';
+    if (index === activeIndex) {
+      badge.classList.remove('text-bg-secondary');
+      badge.classList.add('text-bg-primary', 'ps-active');
+    }
     container.append(badge);
   });
 
   if (metaEl) {
     const count = Number.isFinite(rds?.ps_count) ? Number(rds.ps_count) : values.length;
     const speed = Number.isFinite(rds?.ps_speed) ? Number(rds.ps_speed) : null;
-    const parts = [`Count: ${count}`];
+    const activeText = typeof rds?.ps_current === 'string' ? rds.ps_current.trim() : '';
+    const parts = [];
+    if (activeText) {
+      parts.push(`Current: ${activeText}`);
+    }
+    parts.push(`Count: ${count}`);
     if (speed !== null) {
       parts.push(`Speed: ${speed}`);
     }
@@ -246,7 +264,8 @@ function readList(container) {
 
 function updateStatus(data) {
   if (!data) return;
-  psEl.textContent = data.ps || '—';
+  const psValue = typeof data.ps === 'string' ? data.ps.trim() : data.ps;
+  psEl.textContent = psValue && psValue.length ? psValue : '—';
   rtEl.textContent = data.rt || '—';
   rtSourceEl.textContent = data.rt_source ? `Source: ${data.rt_source}` : 'Source: —';
   freqEl.textContent = formatFrequency(data.frequency_khz);

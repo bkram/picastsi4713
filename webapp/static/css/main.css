@@ -35,3 +35,8 @@ body {
   font-size: 0.75rem;
   font-weight: 600;
 }
+
+.ps-rotation .badge.ps-active {
+  background-color: var(--bs-success) !important;
+  color: #fff;
+}

@@ -50,6 +50,12 @@ monitor:
   recovery_backoff_s: 0.2
 """
 
+ROTATING_CFG = (
+    SAMPLE_CFG.replace("  ps:\n    - TESTFM\n", "  ps:\n    - FIRSTFM\n    - SECONDFM\n")
+    .replace("  ps_speed: 8", "  ps_speed: 1")
+    .replace("  ps_count: 1", "  ps_count: 2")
+)
+
 
 class StubSI4713:
     def __init__(self) -> None:
@@ -151,6 +157,8 @@ def test_apply_config_initialises_hardware(manager: TransmitterManager, tmp_path
     status = manager.apply_config(Path("station.yml"))
     assert status["config_name"] == "station.yml"
     assert status["ps"].strip() == "TESTFM"
+    assert status["rds"]["ps_current"].strip() == "TESTFM"
+    assert status["rds"]["ps_active_index"] == 0
     assert status["broadcasting"] is True
     assert status["rds"]["pi"] == "0x1234"
     assert status["rds"]["tp"] is True
@@ -160,6 +168,8 @@ def test_apply_config_initialises_hardware(manager: TransmitterManager, tmp_path
     event = queue.get(timeout=2)
     assert event["ps"].strip() == "TESTFM"
     assert event["rds"]["pi"] == "0x1234"
+    assert event["rds"]["ps_current"].strip() == "TESTFM"
+    assert event["rds"]["ps_active_index"] == 0
     manager.unregister_queue(queue)
 
 
@@ -197,6 +207,44 @@ def test_read_config_struct_returns_full_payload(manager: TransmitterManager, tm
     }
     assert data["rds"]["rt"]["texts"] == ["Enjoy the music"]
     assert data["monitor"]["health"] is False
+
+
+def test_ps_rotation_advances_current_status(
+    manager: TransmitterManager, tmp_path: Path
+) -> None:
+    cfg_path = tmp_path / "station.yml"
+    cfg_path.write_text(ROTATING_CFG, encoding="utf-8")
+
+    status = manager.apply_config(Path("station.yml"))
+    assert status["ps"].strip() == "FIRSTFM"
+    assert status["rds"]["ps_active_index"] == 0
+    assert status["rds"]["ps_current"].strip() == "FIRSTFM"
+
+    if manager._watchdog_thread and manager._watchdog_thread.is_alive():  # type: ignore[attr-defined]
+        manager._stop_event.set()  # type: ignore[attr-defined]
+        manager._watchdog_thread.join(timeout=1)  # type: ignore[attr-defined]
+
+    with manager._lock:  # type: ignore[attr-defined]
+        cfg = manager._config  # type: ignore[attr-defined]
+        assert cfg is not None
+        manager._ps_next_tick = 0.0  # type: ignore[attr-defined]
+        manager._maybe_rotate_ps(cfg)  # type: ignore[attr-defined]
+
+    rotated = manager.current_status()
+    assert rotated["ps"].strip() == "SECONDFM"
+    assert rotated["rds"]["ps_active_index"] == 1
+    assert rotated["rds"]["ps_current"].strip() == "SECONDFM"
+
+    with manager._lock:  # type: ignore[attr-defined]
+        cfg = manager._config  # type: ignore[attr-defined]
+        assert cfg is not None
+        manager._ps_next_tick = 0.0  # type: ignore[attr-defined]
+        manager._maybe_rotate_ps(cfg)  # type: ignore[attr-defined]
+
+    cycled = manager.current_status()
+    assert cycled["ps"].strip() == "FIRSTFM"
+    assert cycled["rds"]["ps_active_index"] == 0
+    assert cycled["rds"]["ps_current"].strip() == "FIRSTFM"
 
 
 def test_write_config_struct_roundtrip(manager: TransmitterManager, tmp_path: Path) -> None:
