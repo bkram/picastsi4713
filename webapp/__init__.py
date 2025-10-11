@@ -31,11 +31,18 @@ def create_app(config: dict[str, Any] | None = None) -> "Flask":
     app.transmitter_manager = manager  # type: ignore[attr-defined]
     app.register_blueprint(bp)
 
-    @app.teardown_appcontext
-    def _shutdown(exception: BaseException | None) -> None:  # noqa: ARG001
+    def _stop_manager() -> None:
         try:
             manager.shutdown()
         except Exception:  # noqa: BLE001
             LOGGER.exception("Failed to stop transmitter manager")
+
+    # Flask 2.2+ exposes after_serving for one-time shutdown callbacks.
+    if hasattr(app, "after_serving"):
+        app.after_serving(_stop_manager)
+    else:  # pragma: no cover - fallback for older Flask releases
+        import atexit
+
+        atexit.register(_stop_manager)
 
     return app
