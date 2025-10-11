@@ -516,7 +516,9 @@ class TransmitterManager:
             try:
                 self._apply_config_on_backend(tx, cfg)
             except Exception as exc:  # noqa: BLE001
-                LOGGER.exception("Failed to apply configuration using %s backend", self._tx_backend)
+                LOGGER.exception(
+                    "Failed to apply configuration using %s backend", self._tx_backend
+                )
                 fallback = None
                 if self._tx_backend != "virtual":
                     fallback = self._switch_to_virtual_backend(str(exc))
@@ -528,10 +530,43 @@ class TransmitterManager:
                 except Exception as retry_exc:  # noqa: BLE001
                     LOGGER.exception("Failed to apply configuration on virtual backend")
                     raise ValidationError(str(retry_exc)) from retry_exc
+
             self._rt_file_mtime = _get_mtime(cfg.rds_rt_file)
             self._broadcasting = True
             self._broadcast_since = time.monotonic()
             self._update_metrics(cfg, broadcasting=True)
+
+            if cfg.monitor_health:
+                try:
+                    if tx.is_transmitting():
+                        LOGGER.info(
+                            "TX is up at %.2f MHz", cfg.frequency_khz / 1000.0
+                        )
+                    else:
+                        LOGGER.error("TX not running after setup")
+                        if not recover_tx(tx, cfg):
+                            self._broadcasting = False
+                            self._broadcast_since = 0.0
+                            self._update_metrics(cfg, broadcasting=False)
+                            self._metrics.watchdog_status = "failed"
+                            self._publisher.broadcast(self._metrics.to_dict())
+                            raise ValidationError(
+                                "Transmitter failed to start after recovery attempts"
+                            )
+                        # recover_tx reapplies config; resync internal state
+                        self._apply_config_on_backend(tx, cfg)
+                        self._broadcast_since = time.monotonic()
+                        self._update_metrics(cfg, broadcasting=True)
+                except ValidationError:
+                    raise
+                except Exception as exc:  # noqa: BLE001
+                    self._broadcasting = False
+                    self._broadcast_since = 0.0
+                    self._update_metrics(cfg, broadcasting=False)
+                    self._metrics.watchdog_status = "failed"
+                    self._publisher.broadcast(self._metrics.to_dict())
+                    raise ValidationError(str(exc)) from exc
+
             self._ensure_watchdog()
         return self.current_status()
 
@@ -566,9 +601,34 @@ class TransmitterManager:
             self._broadcasting = enabled
             self._broadcast_since = time.monotonic() if enabled else 0.0
             if cfg:
+                if enabled and cfg.monitor_health:
+                    try:
+                        if not tx.is_transmitting():
+                            LOGGER.error("TX not running after enabling broadcast")
+                            if not recover_tx(tx, cfg):
+                                self._broadcasting = False
+                                self._broadcast_since = 0.0
+                                self._update_metrics(cfg, broadcasting=False)
+                                self._metrics.watchdog_status = "failed"
+                                self._publisher.broadcast(self._metrics.to_dict())
+                                raise ValidationError(
+                                    "Transmitter failed to start after recovery attempts"
+                                )
+                            self._apply_config_on_backend(tx, cfg)
+                            self._broadcasting = True
+                            self._broadcast_since = time.monotonic()
+                    except ValidationError:
+                        raise
+                    except Exception as exc:  # noqa: BLE001
+                        self._broadcasting = False
+                        self._broadcast_since = 0.0
+                        self._update_metrics(cfg, broadcasting=False)
+                        self._metrics.watchdog_status = "failed"
+                        self._publisher.broadcast(self._metrics.to_dict())
+                        raise ValidationError(str(exc)) from exc
                 if enabled:
                     self._ensure_watchdog()
-                self._update_metrics(cfg, enabled)
+                self._update_metrics(cfg, self._broadcasting)
             else:
                 self._metrics.broadcasting = enabled
                 self._metrics.watchdog_status = "running" if enabled else "paused"

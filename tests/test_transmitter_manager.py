@@ -1,6 +1,7 @@
 from pathlib import Path
 import sys
 import threading
+import time
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -251,7 +252,9 @@ def test_toggle_broadcast_recovers_with_virtual_backend(
     manager.shutdown()
 
 
-def test_watchdog_respects_health_grace(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_apply_config_recovers_when_initial_tx_down(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     from webapp import transmitter as txmod
 
     class IdleVirtual(txmod.VirtualSI4713):
@@ -262,9 +265,69 @@ def test_watchdog_respects_health_grace(monkeypatch: pytest.MonkeyPatch, tmp_pat
 
     def fake_recover(tx: object, cfg: object) -> bool:
         recover_called.set()
-        return False
+        return True
 
     monkeypatch.setattr(txmod, "VirtualSI4713", IdleVirtual)
+    monkeypatch.setattr(txmod, "recover_tx", fake_recover)
+
+    manager = TransmitterManager(config_root=tmp_path, prefer_virtual=True)
+    cfg_text = SAMPLE_CFG.replace("health: false", "health: true")
+    cfg_path = tmp_path / "station.yml"
+    cfg_path.write_text(cfg_text, encoding="utf-8")
+
+    status = manager.apply_config(Path("station.yml"))
+    assert status["broadcasting"] is True
+    assert recover_called.is_set()
+
+    manager.shutdown()
+
+
+def test_apply_config_raises_when_recover_fails(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from webapp import transmitter as txmod
+
+    class IdleVirtual(txmod.VirtualSI4713):
+        def is_transmitting(self) -> bool:  # type: ignore[override]
+            return False
+
+    monkeypatch.setattr(txmod, "VirtualSI4713", IdleVirtual)
+    monkeypatch.setattr(txmod, "recover_tx", lambda *_: False)
+
+    manager = TransmitterManager(config_root=tmp_path, prefer_virtual=True)
+    cfg_text = SAMPLE_CFG.replace("health: false", "health: true")
+    cfg_path = tmp_path / "station.yml"
+    cfg_path.write_text(cfg_text, encoding="utf-8")
+
+    with pytest.raises(ValidationError):
+        manager.apply_config(Path("station.yml"))
+
+    manager.shutdown()
+
+
+def test_watchdog_respects_health_grace(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from webapp import transmitter as txmod
+
+    class LateFailureVirtual(txmod.VirtualSI4713):
+        def __init__(self) -> None:
+            super().__init__()
+            self._fail_at = time.monotonic() + 0.3
+
+        def tx_status(self) -> tuple[int, int, bool, int] | None:  # type: ignore[override]
+            if time.monotonic() >= self._fail_at:
+                self._transmitting = False
+                self._power = 0
+            return super().tx_status()
+
+    recover_called = threading.Event()
+
+    def fake_recover(tx: object, cfg: object) -> bool:
+        recover_called.set()
+        return False
+
+    monkeypatch.setattr(txmod, "VirtualSI4713", LateFailureVirtual)
     monkeypatch.setattr(txmod, "recover_tx", fake_recover)
 
     manager = TransmitterManager(config_root=tmp_path, prefer_virtual=True)
@@ -276,8 +339,8 @@ def test_watchdog_respects_health_grace(monkeypatch: pytest.MonkeyPatch, tmp_pat
     queue = manager.metrics_queue()
     queue.get(timeout=2)
 
-    assert not recover_called.wait(0.2)
-    assert recover_called.wait(1.0)
+    assert not recover_called.wait(0.5)
+    assert recover_called.wait(1.5)
 
     manager.unregister_queue(queue)
     manager.shutdown()
