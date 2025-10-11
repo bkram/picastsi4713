@@ -42,6 +42,53 @@ Insert audio into your SI4713 module, then run:
 python3 run_tx.py --cfg cfg/picastsi4713.yml
 ```
 
+### Launching the Web Dashboard
+
+The Flask dashboard ships alongside the CLI runner so you can manage
+profiles and watch telemetry from a browser. To start it locally:
+
+1. Create and activate a virtual environment (optional but recommended):
+
+   ```bash
+   python3 -m venv .venv
+   source .venv/bin/activate
+   ```
+
+2. Install the Python requirements:
+
+   ```bash
+   pip install Flask PyYAML smbus2 RPi.GPIO
+   ```
+
+   > Skip the hardware-specific libraries (like `RPi.GPIO`) if you are
+   > developing on a machine without GPIO access. The dashboard itself
+   > only requires `Flask`; the remaining packages let the CLI and
+   > watchdog talk to real SI4713 hardware when present.
+
+3. Run the development server:
+
+   ```bash
+   python -m flask --app webapp:create_app --debug run
+   ```
+
+   By default the web interface reads configuration profiles from
+   `cfg/`. Point it at a different directory by exporting
+   `FLASK_APP=webapp:create_app` once and launching with:
+
+   ```bash
+   FLASK_RUN_HOST=0.0.0.0 FLASK_RUN_PORT=5000 CONFIG_ROOT=/path/to/cfg \
+     python -m flask run
+   ```
+
+   This will bind the server to all interfaces for LAN access and load
+   configurations from the specified folder.
+
+4. Open http://127.0.0.1:5000 in a browser to access the dashboard.
+
+The background watchdog and broadcast controls mirror the CLI behaviour,
+so any profile you apply from the UI immediately affects the live
+transmitter.
+
 ---
 
 ## ⚙️ Configuration
