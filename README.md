@@ -1,6 +1,6 @@
 # PiCastSI4713
 
-A Python runner for the **SI4713 FM + RDS transmitter**, with live configuration reloads, RadioText A/B behavior, file overrides, and health monitoring.
+A Python runner for the **SI4713 FM + RDS transmitter**, with live configuration reloads, RadioText A/B behaviour, Pure.css-powered dashboard controls, and watchdog monitoring.
 Perfect for Raspberry Pi + SI4713 radio projects.
 
 > ⚡ This project is a **Python port** inspired by the original **Arduino SI4713 code** from [PE5PVB](https://github.com/PE5PVB/si4713).
@@ -11,13 +11,14 @@ Perfect for Raspberry Pi + SI4713 radio projects.
 ## ✨ Features
 
 * 📡 **FM Transmission** with configurable frequency, power, and antenna tuning
-* 🎵 **RDS Support**: PI, PTY, TP/TA, DI flags, PS scrolling, and RadioText
+* 🎵 **RDS Support**: PI (hex), PTY, TP/TA, DI flags, PS scrolling, and RadioText with live slot reporting
 * 🔄 **RadioText A/B** switching (`legacy`, `auto`, or `bank` mode)
 * ⚡ **Burst repeats** on change for faster pickup
 * 🔧 **Hot reload**: live diff-only config updates via YAML
-* 🛡️ **Health monitoring** with recovery attempts and ASQ logging
+* 🛡️ **Watchdog monitoring** with recovery attempts, ASQ logging, and dashboard telemetry fed via Server-Sent Events
 * 📝 **File override** for RadioText, with word-skip filters
-* 🎛️ **Centering options** for PS and RT
+* 🎚️ **Limiter & compressor controls** with documented presets and reset helpers for quick tuning
+* 🖥️ **Pure.css web dashboard** for profile management, broadcast toggling, and live RDS/audio status
 
 ---
 
@@ -52,7 +53,7 @@ Perfect for Raspberry Pi + SI4713 radio projects.
 Insert audio into your SI4713 module, then run:
 
 ```bash
-python3 run_tx.py --cfg cfg/picastsi4713.yml
+python3 picast4713.py --cfg cfg/picastsi4713.yml
 ```
 
 ### Launching the Web Dashboard
@@ -98,7 +99,11 @@ profiles and watch telemetry from a browser. To start it locally:
 
 The background watchdog and broadcast controls mirror the CLI behaviour,
 so any profile you apply from the UI immediately affects the live
-transmitter.
+transmitter. The dashboard is built with Pure.css, server-sent events,
+and Jinja2 templates; the landing banner highlights current frequency,
+PS slot, RT text, PI/PTY, limiter headroom, and input deviation in real
+time, while dedicated cards expose RF, RDS, audio, and watchdog
+settings.
 
 > **Hardware requirement**
 >
@@ -117,7 +122,7 @@ An example is provided at **[`cfg/picastsi4713.yml`](cfg/picastsi4713.yml)**:
 ### Highlights
 
 * **RF** → frequency, power, antenna capacitor
-* **RDS** → PI/PTY codes, Program Service names (PS), and RadioText (RT)
+* **RDS** → PI/PTY codes (0x-prefixed), Program Service names (PS), and RadioText (RT)
 * **RT rotation** → multiple texts, auto A/B switching, file override, filtering
 * **Monitoring** → health checks, ASQ logging, automatic recovery
 
@@ -133,8 +138,9 @@ see [`docs/si4713-power.md`](docs/si4713-power.md).
 * Config changes in `cfg/picastsi4713.yml` are hot-reloaded (only diffs applied).
 * The script attempts recovery automatically if the transmitter stalls.
 * The SI4713 limiter clamps anything hotter than –16 dBFS; see
-  [`docs/audio-processing.md`](docs/audio-processing.md) for preset guidance
-  and recommended reset values for the dashboard.
+  [`docs/audio-processing.md`](docs/audio-processing.md) for preset guidance,
+  recommended reset values for the dashboard, and the preset profiles
+  sourced from the Si4713 datasheet.
 
 ---
 
