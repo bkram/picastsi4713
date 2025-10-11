@@ -1,0 +1,8 @@
+# Core dependencies for the PiCast SI4713 CLI and Flask dashboard
+Flask>=2.3,<3.0
+PyYAML>=6.0
+smbus2>=0.4
+RPi.GPIO>=0.7; platform_machine == "armv6l"
+RPi.GPIO>=0.7; platform_machine == "armv7l"
+RPi.GPIO>=0.7; platform_machine == "armv8l"
+RPi.GPIO>=0.7; platform_machine == "aarch64"

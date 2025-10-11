@@ -30,9 +30,22 @@ Perfect for Raspberry Pi + SI4713 radio projects.
 * [Adafruit SI4713 breakout](https://www.adafruit.com/product/1958) or compatible module
 * Dependencies:
 
-```bash
-sudo apt install python3-rpi.gpio python3-smbus python3-yaml
-```
+  * System packages for Raspberry Pi hardware access (install on the Pi):
+
+    ```bash
+    sudo apt install python3-rpi.gpio python3-smbus
+    ```
+
+  * Python packages for the CLI + dashboard (install inside your virtual
+    environment):
+
+    ```bash
+    pip install -r requirements.txt
+    ```
+
+    The `requirements.txt` file pins Flask and the shared runtime
+    dependencies, while also including `RPi.GPIO` guarded behind ARM
+    platform markers so development on non-Pi machines continues to work.
 
 ### Running
 
@@ -57,13 +70,12 @@ profiles and watch telemetry from a browser. To start it locally:
 2. Install the Python requirements:
 
    ```bash
-   pip install Flask PyYAML smbus2 RPi.GPIO
+   pip install -r requirements.txt
    ```
 
-   > Skip the hardware-specific libraries (like `RPi.GPIO`) if you are
-   > developing on a machine without GPIO access. The dashboard itself
-   > only requires `Flask`; the remaining packages let the CLI and
-   > watchdog talk to real SI4713 hardware when present.
+   > When the requirements are installed on non-ARM hardware the
+   > Raspberry Pi GPIO dependency is skipped automatically thanks to the
+   > platform markers in `requirements.txt`.
 
 3. Launch the dashboard with the bundled helper script:
 
