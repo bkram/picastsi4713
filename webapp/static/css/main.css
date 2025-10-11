@@ -19,3 +19,19 @@ body {
 .config-list-item input {
   flex: 1 1 auto;
 }
+
+#metric-rds-flags .badge {
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.ps-rotation {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.ps-rotation .badge {
+  font-size: 0.75rem;
+  font-weight: 600;
+}

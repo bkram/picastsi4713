@@ -7,6 +7,11 @@ const powerEl = document.getElementById('metric-power');
 const capEl = document.getElementById('metric-cap');
 const overmodEl = document.getElementById('metric-overmod');
 const watchdogEl = document.getElementById('metric-watchdog');
+const rdsPiEl = document.getElementById('metric-rds-pi');
+const rdsPtyEl = document.getElementById('metric-rds-pty');
+const rdsFlagsEl = document.getElementById('metric-rds-flags');
+const rdsPsEl = document.getElementById('metric-rds-ps');
+const rdsPsMetaEl = document.getElementById('metric-rds-ps-meta');
 const toggleBroadcast = document.getElementById('toggle-broadcast');
 
 const configFields = document.getElementById('config-fields');
@@ -97,6 +102,72 @@ function collectPiValue() {
   return `0x${digits.padStart(4, '0')}`;
 }
 
+function renderRdsFlags(container, rds) {
+  container.innerHTML = '';
+
+  if (!rds || Object.keys(rds).length === 0) {
+    const badge = document.createElement('span');
+    badge.className = 'badge rounded-pill text-bg-secondary';
+    badge.textContent = 'RDS Inactive';
+    container.append(badge);
+    return;
+  }
+
+  const di = rds.di || {};
+  const descriptors = [
+    { label: 'RDS', active: rds.enabled !== false },
+    { label: 'TP', active: !!rds.tp },
+    { label: 'TA', active: !!rds.ta },
+    { label: rds.ms_music ? 'Music' : 'Speech', active: true },
+    { label: 'Stereo', active: !!di.stereo },
+    { label: 'Dyn PTY', active: !!di.dynamic_pty },
+    { label: 'Compressed', active: !!di.compressed },
+    { label: 'Art. Head', active: !!di.artificial_head },
+  ];
+
+  descriptors.forEach(({ label, active }) => {
+    const badge = document.createElement('span');
+    badge.className = `badge rounded-pill ${active ? 'text-bg-success' : 'text-bg-secondary'}`;
+    badge.textContent = label;
+    container.append(badge);
+  });
+}
+
+function renderRdsPs(container, metaEl, rds) {
+  container.innerHTML = '';
+  if (metaEl) {
+    metaEl.textContent = '';
+    metaEl.classList.add('d-none');
+  }
+
+  const values = Array.isArray(rds?.ps) ? rds.ps.filter((item) => item && item.trim().length > 0) : [];
+  if (!values.length) {
+    container.textContent = '—';
+    return;
+  }
+
+  values.forEach((value) => {
+    const badge = document.createElement('span');
+    badge.className = 'badge rounded-pill text-bg-primary';
+    badge.textContent = value;
+    container.append(badge);
+  });
+
+  if (metaEl) {
+    const count = Number.isFinite(rds?.ps_count) ? Number(rds.ps_count) : values.length;
+    const speed = Number.isFinite(rds?.ps_speed) ? Number(rds.ps_speed) : null;
+    const parts = [`Count: ${count}`];
+    if (speed !== null) {
+      parts.push(`Speed: ${speed}`);
+    }
+    if (rds?.ps_center !== undefined) {
+      parts.push(rds.ps_center ? 'Centered' : 'Left aligned');
+    }
+    metaEl.textContent = parts.join(' · ');
+    metaEl.classList.remove('d-none');
+  }
+}
+
 function markDirty() {
   if (!formEnabled || suspendDirty) {
     return;
@@ -183,6 +254,25 @@ function updateStatus(data) {
   capEl.textContent = data.antenna_cap ?? '—';
   overmodEl.classList.toggle('d-none', !data.overmodulation);
   watchdogEl.textContent = data.watchdog_status || '—';
+  const rds = data.rds || {};
+  if (rdsPiEl) {
+    rdsPiEl.textContent = rds.pi || '—';
+  }
+  if (rdsPtyEl) {
+    if (typeof rds.pty === 'number' && Number.isFinite(rds.pty)) {
+      rdsPtyEl.textContent = rds.pty;
+    } else if (typeof rds.pty === 'string' && rds.pty.trim().length > 0) {
+      rdsPtyEl.textContent = rds.pty;
+    } else {
+      rdsPtyEl.textContent = '—';
+    }
+  }
+  if (rdsFlagsEl) {
+    renderRdsFlags(rdsFlagsEl, rds);
+  }
+  if (rdsPsEl) {
+    renderRdsPs(rdsPsEl, rdsPsMetaEl, rds);
+  }
 
   const broadcasting = Boolean(data.broadcasting);
   broadcastBadge.textContent = broadcasting ? 'ON' : 'OFF';

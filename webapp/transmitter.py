@@ -64,6 +64,7 @@ class Metrics:
     watchdog_active: bool = False
     watchdog_status: str = "idle"
     config_name: Optional[str] = None
+    rds: Dict[str, Any] = field(default_factory=dict)
     last_updated: float = field(default_factory=time.time)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -79,6 +80,7 @@ class Metrics:
             "watchdog_active": self.watchdog_active,
             "watchdog_status": self.watchdog_status,
             "config_name": self.config_name,
+            "rds": self.rds,
             "last_updated": self.last_updated,
         }
 
@@ -712,6 +714,7 @@ class TransmitterManager:
             self._metrics.frequency_khz = new_cfg.frequency_khz
             self._metrics.power = new_cfg.power
             self._metrics.antenna_cap = new_cfg.antenna_cap
+            self._metrics.rds = self._rds_snapshot(new_cfg, self._broadcasting)
             if rt_changed:
                 candidate = _resolve_rotation_rt(new_cfg, self._rotation_idx) or ""
                 self._push_rt(tx, new_cfg, candidate, "config")
@@ -755,6 +758,7 @@ class TransmitterManager:
         self._metrics.rt = candidate.strip()
         self._metrics.rt_source = source
         self._metrics.ps = cfg.rds_ps[0] if cfg.rds_ps else ""
+        self._metrics.rds = self._rds_snapshot(cfg, self._broadcasting)
         self._metrics.last_updated = time.time()
         self._publisher.broadcast(self._metrics.to_dict())
 
@@ -787,5 +791,26 @@ class TransmitterManager:
             if self._config_path
             else None
         )
+        self._metrics.rds = self._rds_snapshot(cfg, broadcasting)
         self._metrics.last_updated = time.time()
         self._publisher.broadcast(self._metrics.to_dict())
+
+    def _rds_snapshot(self, cfg: AppConfig, broadcasting: bool) -> Dict[str, Any]:
+        return {
+            "enabled": broadcasting,
+            "pi": f"0x{cfg.rds_pi:04X}",
+            "pty": cfg.rds_pty,
+            "tp": cfg.rds_tp,
+            "ta": cfg.rds_ta,
+            "ms_music": cfg.rds_ms_music,
+            "ps": list(cfg.rds_ps),
+            "ps_center": cfg.rds_ps_center,
+            "ps_count": cfg.rds_ps_count,
+            "ps_speed": cfg.rds_ps_speed,
+            "di": {
+                "stereo": cfg.di_stereo,
+                "artificial_head": cfg.di_artificial_head,
+                "compressed": cfg.di_compressed,
+                "dynamic_pty": cfg.di_dynamic_pty,
+            },
+        }

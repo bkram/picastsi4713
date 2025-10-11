@@ -152,11 +152,14 @@ def test_apply_config_initialises_hardware(manager: TransmitterManager, tmp_path
     assert status["config_name"] == "station.yml"
     assert status["ps"].strip() == "TESTFM"
     assert status["broadcasting"] is True
+    assert status["rds"]["pi"] == "0x1234"
+    assert status["rds"]["tp"] is True
     assert isinstance(manager._tx, StubSI4713)  # type: ignore[attr-defined]
 
     queue = manager.metrics_queue()
     event = queue.get(timeout=2)
     assert event["ps"].strip() == "TESTFM"
+    assert event["rds"]["pi"] == "0x1234"
     manager.unregister_queue(queue)
 
 
@@ -293,10 +296,12 @@ def test_toggle_broadcast_cycle(manager: TransmitterManager, tmp_path: Path) -> 
     status = manager.set_broadcast(False)
     assert status["broadcasting"] is False
     assert status["watchdog_status"] == "paused"
+    assert status["rds"]["enabled"] is False
 
     status = manager.set_broadcast(True)
     assert status["broadcasting"] is True
     assert status["watchdog_status"] == "running"
+    assert status["rds"]["enabled"] is True
 
 
 def test_apply_config_recovers_when_initial_tx_down(

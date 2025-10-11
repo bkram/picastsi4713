@@ -57,6 +57,27 @@
                   </div>
                 </div>
               </div>
+              <div class="row g-3 mb-3">
+                <div class="col-6">
+                  <div class="small text-muted">PI Code</div>
+                  <div class="fw-semibold text-uppercase" id="metric-rds-pi">—</div>
+                </div>
+                <div class="col-6">
+                  <div class="small text-muted">Program Type (PTY)</div>
+                  <div class="fw-semibold" id="metric-rds-pty">—</div>
+                </div>
+              </div>
+              <div class="mb-3">
+                <div class="small text-muted mb-1">RDS Flags</div>
+                <div class="d-flex flex-wrap gap-2" id="metric-rds-flags">
+                  <span class="badge rounded-pill text-bg-secondary">—</span>
+                </div>
+              </div>
+              <div class="mb-3">
+                <div class="small text-muted mb-1">Program Service Rotation</div>
+                <div class="ps-rotation" id="metric-rds-ps">—</div>
+                <div class="small text-muted d-none" id="metric-rds-ps-meta"></div>
+              </div>
               <div class="alert alert-warning d-none" id="metric-overmod">
                 Over modulation detected. Reduce input gain or deviation.
               </div>
