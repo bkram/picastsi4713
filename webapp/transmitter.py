@@ -318,12 +318,18 @@ class TransmitterManager:
         rt_raw = rds_raw.get("rt", {}) if isinstance(rds_raw.get("rt"), dict) else {}
         skip_words = _list(rt_raw.get("skip_words", []))
 
-        bank_val = rt_raw.get("bank")
-        bank: Optional[int]
-        if bank_val in ("", None):
-            bank = None
-        else:
-            bank = _int(bank_val) & 1
+        ab_mode_raw = rt_raw.get("ab_mode", "auto")
+        ab_mode = str(ab_mode_raw).strip().lower() if ab_mode_raw is not None else "auto"
+        if not ab_mode:
+            ab_mode = "auto"
+        if ab_mode not in {"legacy", "auto", "bank"}:
+            ab_mode = "auto"
+
+        bank: Optional[int] = None
+        if ab_mode == "bank":
+            bank_val = rt_raw.get("bank")
+            if bank_val not in ("", None):
+                bank = _int(bank_val, "rds.rt.bank") & 1
 
         rds = {
             "pi": _int(rds_raw.get("pi"), "rds.pi"),
@@ -349,12 +355,14 @@ class TransmitterManager:
                 "center": _bool(rt_raw.get("center", True)),
                 "file_path": str(rt_raw.get("file_path")) if rt_raw.get("file_path") else None,
                 "skip_words": skip_words,
-                "ab_mode": str(rt_raw.get("ab_mode", "auto")) or "auto",
+                "ab_mode": ab_mode,
                 "repeats": _int(rt_raw.get("repeats", 3), "rds.rt.repeats"),
                 "gap_ms": _int(rt_raw.get("gap_ms", 60), "rds.rt.gap_ms"),
-                "bank": bank,
             },
         }
+
+        if bank is not None:
+            rds["rt"]["bank"] = bank
 
         monitor = {
             "health": _bool(monitor_raw.get("health", True)),

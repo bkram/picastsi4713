@@ -207,6 +207,34 @@ def test_write_config_struct_roundtrip(manager: TransmitterManager, tmp_path: Pa
     assert "pi: 0x1234" in raw
 
 
+def test_write_config_struct_normalizes_ab_mode(manager: TransmitterManager, tmp_path: Path) -> None:
+    cfg_path = tmp_path / "station.yml"
+    cfg_path.write_text(SAMPLE_CFG, encoding="utf-8")
+    payload = manager.read_config_struct(Path("station.yml"))
+    payload["rds"]["rt"]["ab_mode"] = "AUTO"
+    payload["rds"]["rt"]["bank"] = "1"
+
+    manager.write_config_struct(Path("auto.yml"), payload)
+    raw = manager.read_config(Path("auto.yml"))
+
+    assert "ab_mode: auto" in raw
+    assert "bank:" not in raw
+
+
+def test_write_config_struct_preserves_bank_mode(manager: TransmitterManager, tmp_path: Path) -> None:
+    cfg_path = tmp_path / "station.yml"
+    cfg_path.write_text(SAMPLE_CFG, encoding="utf-8")
+    payload = manager.read_config_struct(Path("station.yml"))
+    payload["rds"]["rt"]["ab_mode"] = "bank"
+    payload["rds"]["rt"]["bank"] = "1"
+
+    manager.write_config_struct(Path("bank.yml"), payload)
+    raw = manager.read_config(Path("bank.yml"))
+
+    assert "ab_mode: bank" in raw
+    assert "bank: 1" in raw
+
+
 def test_write_config_struct_validates_ps(manager: TransmitterManager) -> None:
     payload = {
         "rf": {"frequency_khz": "98700", "power": "115", "antenna_cap": "4"},
