@@ -471,11 +471,39 @@ body {
   gap: 0.5rem;
 }
 
-.toggle {
+.toggle { 
   position: relative;
   display: inline-flex;
   width: 48px;
   height: 26px;
+}
+
+.toggle-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.toggle-field--stacked {
+  align-items: flex-start;
+}
+
+.toggle-field--stacked .toggle__label {
+  display: block;
+  font-weight: 600;
+  color: var(--text-strong);
+}
+
+.toggle-field--stacked .input-hint {
+  margin: 0.25rem 0 0;
+}
+
+.rds-config.is-disabled {
+  opacity: 0.45;
+}
+
+[data-rds-section].is-disabled {
+  opacity: 0.55;
 }
 
 .toggle input {

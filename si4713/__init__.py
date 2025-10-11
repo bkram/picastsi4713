@@ -147,6 +147,14 @@ class SI4713:
             self.component &= ~0x03
         self._set_prop(0x2100, self.component)
 
+    def set_stereo_mode(self, stereo: bool) -> None:
+        if stereo:
+            self.component |= 0x03
+        else:
+            self.component |= 0x01
+            self.component &= ~0x02
+        self._set_prop(0x2100, self.component)
+
     def set_pilot(self, freq_hz: int, dev_hz: int) -> None:
         self._set_prop(0x2107, freq_hz)
         self._set_prop(0x2102, dev_hz)

@@ -145,6 +145,7 @@ class AppConfig:
     antenna_cap: int
 
     # Audio processing
+    audio_stereo: bool
     audio_agc_on: bool
     audio_limiter_on: bool
     audio_comp_thr: int
@@ -154,6 +155,7 @@ class AppConfig:
     audio_lim_rel: int
 
     # RDS flags
+    rds_enabled: bool
     rds_pi: int
     rds_pty: int
     rds_tp: bool
@@ -218,6 +220,7 @@ class AppConfig:
         self.antenna_cap = max(0, min(255, _parse_int(rf.get("antenna_cap", 4), 4)))
 
         # Audio processing
+        self.audio_stereo = _parse_bool(audio.get("stereo", True), True)
         self.audio_agc_on = _parse_bool(audio.get("agc_on", False), False)
         self.audio_limiter_on = _parse_bool(audio.get("limiter_on", True), True)
         self.audio_comp_thr = _parse_int(audio.get("comp_thr", -30), -30)
@@ -235,6 +238,7 @@ class AppConfig:
             "rds.ps must be a non-empty list",
         )
 
+        self.rds_enabled = _parse_bool(rds.get("enabled", True), True)
         self.rds_pi = _parse_int(rds.get("pi"), 0)
         self.rds_pty = max(0, min(31, _parse_int(rds.get("pty"), 0)))
         self.rds_tp = _parse_bool(rds.get("tp", True), True)
@@ -359,9 +363,10 @@ def apply_config(tx: SI4713, cfg: AppConfig) -> Tuple[str, str, int, float]:
     tx.set_output(cfg.power, cfg.antenna_cap)
     tx.set_frequency_10khz(cfg.freq_10khz)
     tx.enable_mpx(True)
+    tx.set_stereo_mode(cfg.audio_stereo)
 
     # Pilot/audio
-    tx.set_pilot(freq_hz=19000, dev_hz=675)  # 6.75 kHz
+    tx.set_pilot(freq_hz=19000, dev_hz=675 if cfg.audio_stereo else 0)
     tx.set_audio(deviation_hz=7500, mute=False, preemph_us=50)  # 75.00 kHz, 50 µs
 
     # Loudness & peak control
@@ -376,6 +381,7 @@ def apply_config(tx: SI4713, cfg: AppConfig) -> Tuple[str, str, int, float]:
     )
 
     # RDS flags/props
+    tx.rds_enable(cfg.rds_enabled)
     tx.rds_set_pi(cfg.rds_pi)
     tx.rds_set_pty(cfg.rds_pty)
     tx.rds_set_deviation(cfg.rds_dev_hz)  # 10 Hz units
@@ -393,7 +399,7 @@ def apply_config(tx: SI4713, cfg: AppConfig) -> Tuple[str, str, int, float]:
     for text8, slot in _ps_pairs(cfg.rds_ps, center=cfg.rds_ps_center):
         tx.rds_set_ps(text8, slot)
     tx.rds_set_pscount(max(1, cfg.rds_ps_count), max(1, cfg.rds_ps_speed))
-    tx.rds_enable(True)
+    tx.rds_enable(cfg.rds_enabled)
 
     # RT initial
     rt_text: Optional[str] = _resolve_file_rt(cfg)
@@ -408,17 +414,21 @@ def apply_config(tx: SI4713, cfg: AppConfig) -> Tuple[str, str, int, float]:
         rt_text = _resolve_rotation_rt(cfg, rot_idx) or ""
         source = f"list[{rot_idx}]" if cfg.rds_rt_texts else "fallback"
 
-    _burst_rt(
-        tx,
-        rt_text,
-        ab_mode=cfg.rds_rt_ab_mode,
-        repeats=cfg.rds_rt_repeats,
-        gap_ms=cfg.rds_rt_gap_ms,
-        bank=cfg.rds_rt_bank,
-    )
+    if cfg.rds_enabled:
+        _burst_rt(
+            tx,
+            rt_text,
+            ab_mode=cfg.rds_rt_ab_mode,
+            repeats=cfg.rds_rt_repeats,
+            gap_ms=cfg.rds_rt_gap_ms,
+            bank=cfg.rds_rt_bank,
+        )
+        logger.info("RT source active: %s -> %r", source, rt_text)
+    else:
+        logger.info("RDS disabled; skipping RT burst for %s", source)
+        source = "disabled"
 
-    logger.info("RT source active: %s -> %r", source, rt_text)
-    return rt_text, source, rot_idx, next_rotate_at
+    return rt_text if cfg.rds_enabled else "", source, rot_idx, next_rotate_at
 
 
 def reconfigure_live(tx: SI4713, old: AppConfig, new: AppConfig) -> bool:
@@ -427,6 +437,12 @@ def reconfigure_live(tx: SI4713, old: AppConfig, new: AppConfig) -> bool:
         tx.set_output(new.power, new.antenna_cap)
     if old.frequency_khz != new.frequency_khz:
         tx.set_frequency_10khz(new.freq_10khz)
+    if old.audio_stereo != new.audio_stereo:
+        tx.set_stereo_mode(new.audio_stereo)
+        tx.set_pilot(freq_hz=19000, dev_hz=675 if new.audio_stereo else 0)
+    if old.rds_enabled != new.rds_enabled:
+        tx.rds_enable(new.rds_enabled)
+        rt_dep_changed = rt_dep_changed or new.rds_enabled
     if old.rds_pi != new.rds_pi:
         tx.rds_set_pi(new.rds_pi)
     if old.rds_pty != new.rds_pty:

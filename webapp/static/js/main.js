@@ -24,6 +24,10 @@ const duplicateBtn = document.getElementById('btn-duplicate');
 const addPsBtn = document.getElementById('btn-add-ps');
 const addRtTextBtn = document.getElementById('btn-add-rt-text');
 const addSkipWordBtn = document.getElementById('btn-add-skip-word');
+const stereoToggle = document.getElementById('audio-stereo');
+const rdsToggle = document.getElementById('rds-enabled');
+
+const rdsSections = Array.from(document.querySelectorAll('[data-rds-section]'));
 
 const psList = document.getElementById('ps-list');
 const rtTextsList = document.getElementById('rt-texts-list');
@@ -467,6 +471,9 @@ function renderRdsPs(container, metaEl, rds) {
     if (rds?.ps_center !== undefined) {
       parts.push(rds.ps_center ? 'Centered' : 'Left aligned');
     }
+    if (rds?.configured === false) {
+      parts.unshift('RDS disabled');
+    }
     metaEl.textContent = parts.join(' · ');
     metaEl.classList.remove('is-hidden');
   }
@@ -528,6 +535,9 @@ function clearForm() {
   renderList(skipWordsList, [], 'word to skip');
   setAudioPresetSelection(null);
   syncMonitorIntervalPreview();
+  if (rdsToggle) {
+    setRdsEnabledState(rdsToggle.checked);
+  }
   suspendDirty = false;
 }
 
@@ -571,6 +581,17 @@ function readList(container) {
     .filter((value) => value.length > 0);
 }
 
+function setRdsEnabledState(enabled) {
+  const isEnabled = Boolean(enabled);
+  rdsSections.forEach((section) => {
+    section.classList.toggle('is-disabled', !isEnabled);
+    section.querySelectorAll('input, select, textarea, button').forEach((element) => {
+      if (element === rdsToggle) return;
+      element.disabled = !isEnabled;
+    });
+  });
+}
+
 function updateStatus(data) {
   if (!data) return;
   const psValue = typeof data.ps === 'string' ? data.ps.trim() : data.ps;
@@ -607,7 +628,9 @@ function updateStatus(data) {
       statusText = 'Limiter idle';
     }
 
-    audioStatusEl.textContent = statusText;
+    const stereoLabel = audio.stereo === false ? 'Mono composite' : 'Stereo composite';
+    const statusParts = [stereoLabel, statusText];
+    audioStatusEl.textContent = statusParts.join(' · ');
     audioStatusEl.classList.remove('is-warning', 'is-danger');
     if (statusClass) {
       audioStatusEl.classList.add(statusClass);
@@ -733,6 +756,9 @@ function populateForm(config) {
   document.getElementById('rf-antenna').value = config.rf?.antenna_cap ?? '';
 
   const audio = config.audio || {};
+  if (stereoToggle) {
+    stereoToggle.checked = audio.stereo !== false;
+  }
   document.getElementById('audio-agc').checked = Boolean(audio.agc_on);
   document.getElementById('audio-limiter').checked = audio.limiter_on !== false;
   document.getElementById('audio-comp-thr').value =
@@ -747,25 +773,32 @@ function populateForm(config) {
     audio.lim_rel !== undefined ? audio.lim_rel : '';
   setAudioPresetSelection(audio);
 
-  piInput.value = formatPiDigits(config.rds?.pi);
-  document.getElementById('rds-pty').value = config.rds?.pty ?? '';
-  document.getElementById('rds-deviation').value = config.rds?.deviation_hz ?? '';
-  document.getElementById('rds-tp').checked = Boolean(config.rds?.tp);
-  document.getElementById('rds-ta').checked = Boolean(config.rds?.ta);
-  document.getElementById('rds-ms-music').checked = Boolean(config.rds?.ms_music);
+  const rds = config.rds || {};
+  if (rdsToggle) {
+    const enabled = rds.enabled !== false;
+    rdsToggle.checked = enabled;
+    setRdsEnabledState(enabled);
+  }
 
-  const di = config.rds?.di || {};
+  piInput.value = formatPiDigits(rds.pi);
+  document.getElementById('rds-pty').value = rds.pty ?? '';
+  document.getElementById('rds-deviation').value = rds.deviation_hz ?? '';
+  document.getElementById('rds-tp').checked = Boolean(rds.tp);
+  document.getElementById('rds-ta').checked = Boolean(rds.ta);
+  document.getElementById('rds-ms-music').checked = Boolean(rds.ms_music);
+
+  const di = rds.di || {};
   document.getElementById('di-stereo').checked = Boolean(di.stereo);
   document.getElementById('di-artificial-head').checked = Boolean(di.artificial_head);
   document.getElementById('di-compressed').checked = Boolean(di.compressed);
   document.getElementById('di-dynamic-pty').checked = Boolean(di.dynamic_pty);
 
-  renderList(psList, config.rds?.ps || [], 'Station name');
-  document.getElementById('rds-ps-center').checked = Boolean(config.rds?.ps_center);
-  document.getElementById('rds-ps-speed').value = config.rds?.ps_speed ?? '';
-  document.getElementById('rds-ps-count').value = config.rds?.ps_count ?? '';
+  renderList(psList, rds.ps || [], 'Station name');
+  document.getElementById('rds-ps-center').checked = Boolean(rds.ps_center);
+  document.getElementById('rds-ps-speed').value = rds.ps_speed ?? '';
+  document.getElementById('rds-ps-count').value = rds.ps_count ?? '';
 
-  const rt = config.rds?.rt || {};
+  const rt = rds.rt || {};
   document.getElementById('rt-text').value = rt.text ?? '';
   document.getElementById('rt-speed').value = rt.speed_s ?? '';
   document.getElementById('rt-center').checked = Boolean(rt.center);
@@ -798,6 +831,7 @@ function collectFormData() {
       antenna_cap: document.getElementById('rf-antenna').value.trim(),
     },
     rds: {
+      enabled: rdsToggle ? rdsToggle.checked : true,
       pi: collectPiValue(),
       pty: document.getElementById('rds-pty').value.trim(),
       deviation_hz: document.getElementById('rds-deviation').value.trim(),
@@ -835,6 +869,7 @@ function collectFormData() {
       recovery_backoff_s: document.getElementById('monitor-recovery-backoff').value.trim(),
     },
     audio: {
+      stereo: stereoToggle ? stereoToggle.checked : true,
       agc_on: document.getElementById('audio-agc').checked,
       limiter_on: document.getElementById('audio-limiter').checked,
       comp_thr: document.getElementById('audio-comp-thr').value.trim(),
@@ -1006,6 +1041,12 @@ addSkipWordBtn.addEventListener('click', () => {
   markDirty();
 });
 
+if (rdsToggle) {
+  rdsToggle.addEventListener('change', (event) => {
+    setRdsEnabledState(event.target.checked);
+  });
+}
+
 AUDIO_FIELD_IDS.forEach((id) => {
   const el = document.getElementById(id);
   if (!el) {
@@ -1029,6 +1070,8 @@ if (audioPresetSelect) {
     }
   });
 }
+
+setRdsEnabledState(rdsToggle ? rdsToggle.checked : true);
 
 if (audioPresetReset) {
   audioPresetReset.addEventListener('click', (event) => {

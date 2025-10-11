@@ -251,6 +251,7 @@ class TransmitterManager:
                 "antenna_cap": cfg.antenna_cap,
             },
             "audio": {
+                "stereo": cfg.audio_stereo,
                 "agc_on": cfg.audio_agc_on,
                 "limiter_on": cfg.audio_limiter_on,
                 "comp_thr": cfg.audio_comp_thr,
@@ -260,6 +261,7 @@ class TransmitterManager:
                 "lim_rel": cfg.audio_lim_rel,
             },
             "rds": {
+                "enabled": cfg.rds_enabled,
                 "pi": cfg.rds_pi,
                 "pty": cfg.rds_pty,
                 "tp": cfg.rds_tp,
@@ -362,6 +364,9 @@ class TransmitterManager:
         }
 
         audio = {
+            "stereo": _bool(audio_raw.get("stereo", True))
+            if isinstance(audio_raw, dict)
+            else True,
             "agc_on": _bool(audio_raw.get("agc_on")) if isinstance(audio_raw, dict) else False,
             "limiter_on": _bool(audio_raw.get("limiter_on", True))
             if isinstance(audio_raw, dict)
@@ -395,6 +400,7 @@ class TransmitterManager:
                 bank = _int(bank_val, "rds.rt.bank") & 1
 
         rds = {
+            "enabled": _bool(rds_raw.get("enabled", True)),
             "pi": _int(rds_raw.get("pi"), "rds.pi"),
             "pty": _int(rds_raw.get("pty"), "rds.pty"),
             "tp": _bool(rds_raw.get("tp", True)),
@@ -459,6 +465,7 @@ class TransmitterManager:
             "rf": serialized["rf"],
             "audio": serialized["audio"],
             "rds": {
+                "enabled": serialized["rds"]["enabled"],
                 "pi": _HexString(f"0x{serialized['rds']['pi']:04X}"),
                 "pty": serialized["rds"]["pty"],
                 "tp": serialized["rds"]["tp"],
@@ -591,6 +598,10 @@ class TransmitterManager:
             LOGGER.info("Setting broadcast %s", "ON" if enabled else "OFF")
             try:
                 tx.enable_mpx(enabled)
+                if enabled and cfg:
+                    tx.set_stereo_mode(cfg.audio_stereo)
+                    tx.set_pilot(freq_hz=19000, dev_hz=675 if cfg.audio_stereo else 0)
+                    tx.rds_enable(cfg.rds_enabled)
                 actual_state = bool(tx.is_transmitting()) if enabled else False
             except Exception as exc:  # noqa: BLE001
                 raise ValidationError(str(exc)) from exc
@@ -968,11 +979,18 @@ class TransmitterManager:
             self._metrics.antenna_cap = new_cfg.antenna_cap
             self._metrics.rds = self._rds_snapshot(new_cfg, self._broadcasting)
             self._metrics.audio = self._audio_snapshot(new_cfg)
+            if not new_cfg.rds_enabled:
+                self._rt_state = ""
+                self._rt_source = "disabled"
+                self._metrics.rt = ""
+                self._metrics.rt_source = "disabled"
             if rt_changed:
                 candidate = _resolve_rotation_rt(new_cfg, self._rotation_idx) or ""
                 self._push_rt(tx, new_cfg, candidate, "config")
 
     def _maybe_refresh_rt(self, cfg: AppConfig, tx: Any) -> None:
+        if not cfg.rds_enabled:
+            return
         now = time.monotonic()
         if cfg.rds_rt_file:
             current_mtime = _get_mtime(cfg.rds_rt_file)
@@ -994,6 +1012,8 @@ class TransmitterManager:
             self._next_rotation = now + max(0.5, cfg.rds_rt_speed_s)
 
     def _push_rt(self, tx: Any, cfg: AppConfig, candidate: str, source: str) -> None:
+        if not cfg.rds_enabled:
+            return
         try:
             _burst_rt(
                 tx,
@@ -1043,6 +1063,8 @@ class TransmitterManager:
         return self._ps_slots[index].strip()
 
     def _maybe_rotate_ps(self, cfg: AppConfig) -> None:
+        if not cfg.rds_enabled:
+            return
         if not self._ps_slots or len(self._ps_slots) == 1:
             return
         now = time.monotonic()
@@ -1100,7 +1122,8 @@ class TransmitterManager:
         active_index = self._ps_index if self._ps_slots else None
         current_ps = self._current_ps_display()
         return {
-            "enabled": broadcasting,
+            "enabled": cfg.rds_enabled and broadcasting,
+            "configured": cfg.rds_enabled,
             "pi": f"0x{cfg.rds_pi:04X}",
             "pty": cfg.rds_pty,
             "tp": cfg.rds_tp,
@@ -1131,6 +1154,7 @@ class TransmitterManager:
         level = self._audio_level_dbfs if input_level is None else input_level
         overmod_flag = self._audio_overmod if overmod is None else overmod
         return {
+            "stereo": cfg.audio_stereo,
             "agc_on": cfg.audio_agc_on,
             "limiter_on": cfg.audio_limiter_on,
             "comp_thr": cfg.audio_comp_thr,

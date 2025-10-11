@@ -1,8 +1,11 @@
 rf:
-  frequency_khz: 108000 
+  frequency_khz: 108000
   power:  115
   antenna_cap: 3
+audio:
+  stereo: true
 rds:
+  enabled: true
   pi: 0x1234
   pty: 12
   tp: false

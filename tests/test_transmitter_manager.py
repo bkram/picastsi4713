@@ -16,6 +16,7 @@ rf:
   power: 115
   antenna_cap: 4
 audio:
+  stereo: true
   agc_on: false
   limiter_on: true
   comp_thr: -26
@@ -24,6 +25,7 @@ audio:
   comp_gain: 12
   lim_rel: 60
 rds:
+  enabled: true
   pi: 0x1234
   pty: 5
   tp: true
@@ -74,6 +76,8 @@ class StubSI4713:
         self.antenna = 0
         self.closed = False
         self.audio_settings: Dict[str, Any] = {}
+        self.stereo_mode = True
+        self.rds_enabled = True
 
     def init(self, *_: object, **__: object) -> bool:
         return True
@@ -87,6 +91,9 @@ class StubSI4713:
 
     def enable_mpx(self, on: bool) -> None:
         self._transmitting = on
+
+    def set_stereo_mode(self, stereo: bool) -> None:
+        self.stereo_mode = stereo
 
     def set_pilot(self, *_: object, **__: object) -> None:
         return
@@ -148,8 +155,8 @@ class StubSI4713:
     def rds_set_rt(self, *_: object, **__: object) -> None:
         return
 
-    def rds_enable(self, *_: object, **__: object) -> None:
-        return
+    def rds_enable(self, enabled: bool) -> None:
+        self.rds_enabled = enabled
 
     def hw_reset(self, *_: object, **__: object) -> None:
         self._transmitting = False
@@ -193,6 +200,9 @@ def test_apply_config_initialises_hardware(manager: TransmitterManager, tmp_path
     assert status["audio"]["limiter_on"] is True
     assert status["audio"]["comp_thr"] == -26
     assert status["audio"]["comp_gain"] == 12
+    assert status["audio"]["stereo"] is True
+    assert status["rds"]["enabled"] is True
+    assert status["rds"]["configured"] is True
     assert isinstance(manager._tx, StubSI4713)  # type: ignore[attr-defined]
     assert manager._tx.audio_settings["comp_thr"] == -26  # type: ignore[attr-defined]
     assert manager._tx.audio_settings["limiter_on"] is True  # type: ignore[attr-defined]
@@ -203,7 +213,9 @@ def test_apply_config_initialises_hardware(manager: TransmitterManager, tmp_path
     assert event["rds"]["pi"] == "0x1234"
     assert event["rds"]["ps_current"].strip() == "TESTFM"
     assert event["rds"]["ps_active_index"] == 0
+    assert event["rds"]["configured"] is True
     assert event["audio"]["limiter_on"] is True
+    assert event["audio"]["stereo"] is True
     assert event.get("audio_input_dbfs") is None
     manager.unregister_queue(queue)
 
@@ -235,6 +247,8 @@ def test_read_config_struct_returns_full_payload(manager: TransmitterManager, tm
     assert data["rds"]["pi"] == "0x1234"
     assert data["audio"]["limiter_on"] is True
     assert data["audio"]["comp_thr"] == -26
+    assert data["audio"]["stereo"] is True
+    assert data["rds"]["enabled"] is True
     assert data["rds"]["ps"] == ["TESTFM"]
     assert data["rds"]["di"] == {
         "stereo": True,
@@ -244,6 +258,27 @@ def test_read_config_struct_returns_full_payload(manager: TransmitterManager, tm
     }
     assert data["rds"]["rt"]["texts"] == ["Enjoy the music"]
     assert data["monitor"]["health"] is False
+
+
+def test_apply_config_respects_stereo_and_rds_flags(
+    manager: TransmitterManager, tmp_path: Path
+) -> None:
+    cfg_path = tmp_path / "station.yml"
+    custom_cfg = (
+        SAMPLE_CFG.replace("stereo: true", "stereo: false")
+        .replace("enabled: true", "enabled: false")
+    )
+    cfg_path.write_text(custom_cfg, encoding="utf-8")
+
+    status = manager.apply_config(Path("station.yml"))
+    tx = manager._tx  # type: ignore[attr-defined]
+    assert tx is not None
+    assert tx.stereo_mode is False
+    assert tx.rds_enabled is False
+    assert status["audio"]["stereo"] is False
+    assert status["rds"]["configured"] is False
+    assert status["rds"]["enabled"] is False
+    assert status["rt_source"] == "disabled"
 
 
 def test_ps_rotation_advances_current_status(
@@ -384,15 +419,19 @@ def test_toggle_broadcast_cycle(manager: TransmitterManager, tmp_path: Path) -> 
     assert status["broadcasting"] is False
     assert status["watchdog_status"] == "stopped"
     assert status["rds"]["enabled"] is False
+    assert status["rds"]["configured"] is True
     assert status["audio_input_dbfs"] is None
     assert status["audio"]["limiter_on"] is True
+    assert status["audio"]["stereo"] is True
     assert manager._tx is None  # type: ignore[attr-defined]
 
     status = manager.set_broadcast(True)
     assert status["broadcasting"] is True
     assert status["watchdog_status"] == "running"
     assert status["rds"]["enabled"] is True
+    assert status["rds"]["configured"] is True
     assert status["audio"]["comp_thr"] == -26
+    assert status["audio"]["stereo"] is True
 
 
 def test_apply_config_recovers_when_initial_tx_down(
