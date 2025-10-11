@@ -89,8 +89,34 @@ let formEnabled = false;
 let suspendDirty = false;
 
 function formatFrequency(khz) {
-  if (!khz) return '—';
-  return `${(khz / 1000).toFixed(3)} MHz`;
+  const numeric = Number(khz);
+  if (!Number.isFinite(numeric) || numeric <= 0) {
+    return '—';
+  }
+  return `${(numeric / 1000).toFixed(2)} MHz`;
+}
+
+function fromKhzToMHz(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) {
+    return '';
+  }
+  return (numeric / 1000).toFixed(2);
+}
+
+function toKhzFromMHz(raw) {
+  if (raw === null || raw === undefined) {
+    return '';
+  }
+  const trimmed = String(raw).trim();
+  if (!trimmed) {
+    return '';
+  }
+  const numeric = Number(trimmed);
+  if (!Number.isFinite(numeric)) {
+    return trimmed;
+  }
+  return Math.round(numeric * 1000).toString();
 }
 
 function sanitizePiDigits(raw) {
@@ -569,7 +595,9 @@ function showFeedback(message, type = 'success') {
 
 function populateForm(config) {
   suspendDirty = true;
-  document.getElementById('rf-frequency').value = config.rf?.frequency_khz ?? '';
+  document.getElementById('rf-frequency').value = fromKhzToMHz(
+    config.rf?.frequency_khz
+  );
   document.getElementById('rf-power').value = config.rf?.power ?? '';
   document.getElementById('rf-antenna').value = config.rf?.antenna_cap ?? '';
 
@@ -632,7 +660,7 @@ function populateForm(config) {
 function collectFormData() {
   return {
     rf: {
-      frequency_khz: document.getElementById('rf-frequency').value.trim(),
+      frequency_khz: toKhzFromMHz(document.getElementById('rf-frequency').value),
       power: document.getElementById('rf-power').value.trim(),
       antenna_cap: document.getElementById('rf-antenna').value.trim(),
     },
