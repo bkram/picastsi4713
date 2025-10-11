@@ -259,6 +259,7 @@ class TransmitterManager:
                 "comp_rel": cfg.audio_comp_rel,
                 "comp_gain": cfg.audio_comp_gain,
                 "lim_rel": cfg.audio_lim_rel,
+                "preemphasis_us": cfg.audio_preemph_us,
             },
             "rds": {
                 "enabled": cfg.rds_enabled,
@@ -277,7 +278,6 @@ class TransmitterManager:
                 "ps_center": cfg.rds_ps_center,
                 "ps_speed": cfg.rds_ps_speed,
                 "ps_count": cfg.rds_ps_count,
-                "deviation_hz": cfg.rds_dev_hz,
                 "rt": {
                     "text": cfg.rds_rt_text,
                     "texts": cfg.rds_rt_texts,
@@ -376,6 +376,9 @@ class TransmitterManager:
             "comp_rel": _int(audio_raw.get("comp_rel", 2), "audio.comp_rel"),
             "comp_gain": _int(audio_raw.get("comp_gain", 15), "audio.comp_gain"),
             "lim_rel": _int(audio_raw.get("lim_rel", 50), "audio.lim_rel"),
+            "preemphasis_us": _int(
+                audio_raw.get("preemphasis_us", 50), "audio.preemphasis_us"
+            ),
         }
 
         di_raw = rds_raw.get("di", {}) if isinstance(rds_raw.get("di"), dict) else {}
@@ -410,7 +413,6 @@ class TransmitterManager:
             "ps_center": _bool(rds_raw.get("ps_center", True)),
             "ps_speed": _int(rds_raw.get("ps_speed", 10), "rds.ps_speed"),
             "ps_count": _int(rds_raw.get("ps_count", len(ps_list)), "rds.ps_count"),
-            "deviation_hz": _int(rds_raw.get("deviation_hz", 200), "rds.deviation_hz"),
             "di": {
                 "stereo": _bool(di_raw.get("stereo", True)),
                 "artificial_head": _bool(di_raw.get("artificial_head", False)),
@@ -475,7 +477,6 @@ class TransmitterManager:
                 "ps_center": serialized["rds"]["ps_center"],
                 "ps_speed": serialized["rds"]["ps_speed"],
                 "ps_count": serialized["rds"]["ps_count"],
-                "deviation_hz": serialized["rds"]["deviation_hz"],
                 "di": serialized["rds"]["di"],
                 "rt": rt_section,
             },
@@ -1162,6 +1163,7 @@ class TransmitterManager:
             "comp_rel": cfg.audio_comp_rel,
             "comp_gain": cfg.audio_comp_gain,
             "lim_rel": cfg.audio_lim_rel,
+            "preemphasis_us": cfg.audio_preemph_us,
             "input_level_dbfs": level,
             "overmod": overmod_flag,
         }

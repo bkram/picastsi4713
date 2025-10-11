@@ -25,6 +25,7 @@ const addPsBtn = document.getElementById('btn-add-ps');
 const addRtTextBtn = document.getElementById('btn-add-rt-text');
 const addSkipWordBtn = document.getElementById('btn-add-skip-word');
 const stereoToggle = document.getElementById('audio-stereo');
+const audioPreemphasisSelect = document.getElementById('audio-preemphasis');
 const rdsToggle = document.getElementById('rds-enabled');
 
 const rdsSections = Array.from(document.querySelectorAll('[data-rds-section]'));
@@ -772,6 +773,10 @@ function populateForm(config) {
   document.getElementById('audio-lim-rel').value =
     audio.lim_rel !== undefined ? audio.lim_rel : '';
   setAudioPresetSelection(audio);
+  if (audioPreemphasisSelect) {
+    const preemph = Number(audio.preemphasis_us);
+    audioPreemphasisSelect.value = preemph === 75 ? '75' : '50';
+  }
 
   const rds = config.rds || {};
   if (rdsToggle) {
@@ -782,7 +787,6 @@ function populateForm(config) {
 
   piInput.value = formatPiDigits(rds.pi);
   document.getElementById('rds-pty').value = rds.pty ?? '';
-  document.getElementById('rds-deviation').value = rds.deviation_hz ?? '';
   document.getElementById('rds-tp').checked = Boolean(rds.tp);
   document.getElementById('rds-ta').checked = Boolean(rds.ta);
   document.getElementById('rds-ms-music').checked = Boolean(rds.ms_music);
@@ -834,7 +838,6 @@ function collectFormData() {
       enabled: rdsToggle ? rdsToggle.checked : true,
       pi: collectPiValue(),
       pty: document.getElementById('rds-pty').value.trim(),
-      deviation_hz: document.getElementById('rds-deviation').value.trim(),
       tp: document.getElementById('rds-tp').checked,
       ta: document.getElementById('rds-ta').checked,
       ms_music: document.getElementById('rds-ms-music').checked,
@@ -877,6 +880,9 @@ function collectFormData() {
       comp_rel: document.getElementById('audio-comp-rel').value.trim(),
       comp_gain: document.getElementById('audio-comp-gain').value.trim(),
       lim_rel: document.getElementById('audio-lim-rel').value.trim(),
+      preemphasis_us: audioPreemphasisSelect
+        ? audioPreemphasisSelect.value.trim()
+        : '',
     },
   };
 }

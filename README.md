@@ -101,7 +101,7 @@ The background watchdog and broadcast controls mirror the CLI behaviour,
 so any profile you apply from the UI immediately affects the live
 transmitter. The dashboard is built with Pure.css, server-sent events,
 and Jinja2 templates; the landing banner highlights current frequency,
-PS slot, RT text, PI/PTY, limiter headroom, and input deviation in real
+PS slot, RT text, PI/PTY, limiter headroom, and input level in real
 time, while dedicated cards expose RF, RDS, audio, and watchdog
 settings.
 

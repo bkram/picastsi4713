@@ -153,6 +153,7 @@ class AppConfig:
     audio_comp_rel: int
     audio_comp_gain: int
     audio_lim_rel: int
+    audio_preemph_us: int
 
     # RDS flags
     rds_enabled: bool
@@ -173,7 +174,6 @@ class AppConfig:
     rds_ps_speed: int
 
     # RT
-    rds_dev_hz: int  # 10 Hz units (e.g., 200 => 2.00 kHz)
     rds_rt_text: str
     rds_rt_texts: List[str]
     rds_rt_speed_s: float
@@ -228,6 +228,11 @@ class AppConfig:
         self.audio_comp_rel = _parse_int(audio.get("comp_rel", 2), 2)
         self.audio_comp_gain = _parse_int(audio.get("comp_gain", 15), 15)
         self.audio_lim_rel = _parse_int(audio.get("lim_rel", 50), 50)
+        preemph = _parse_int(audio.get("preemphasis_us", 50), 50)
+        if preemph not in {50, 75}:
+            logger.warning("Unsupported pre-emphasis %sµs; defaulting to 50µs", preemph)
+            preemph = 50
+        self.audio_preemph_us = preemph
 
         # RDS flags
         _enforce("pi" in rds, "rds.pi is required")
@@ -263,7 +268,6 @@ class AppConfig:
         )
 
         # RT core
-        self.rds_dev_hz = _parse_int(rds.get("deviation_hz", 200), 200)  # 10 Hz units
         rt_cfg = rds.get("rt", {}) if isinstance(rds.get("rt"), dict) else {}
         self.rds_rt_text = _parse_str(rt_cfg.get("text", ""), "")
         self.rds_rt_texts = [
@@ -367,7 +371,11 @@ def apply_config(tx: SI4713, cfg: AppConfig) -> Tuple[str, str, int, float]:
 
     # Pilot/audio
     tx.set_pilot(freq_hz=19000, dev_hz=675 if cfg.audio_stereo else 0)
-    tx.set_audio(deviation_hz=7500, mute=False, preemph_us=50)  # 75.00 kHz, 50 µs
+    tx.set_audio(
+        deviation_hz=7500,
+        mute=False,
+        preemph_us=cfg.audio_preemph_us,
+    )
 
     # Loudness & peak control
     tx.set_audio_processing(
@@ -384,7 +392,6 @@ def apply_config(tx: SI4713, cfg: AppConfig) -> Tuple[str, str, int, float]:
     tx.rds_enable(cfg.rds_enabled)
     tx.rds_set_pi(cfg.rds_pi)
     tx.rds_set_pty(cfg.rds_pty)
-    tx.rds_set_deviation(cfg.rds_dev_hz)  # 10 Hz units
     tx.rds_set_tp(cfg.rds_tp)
     tx.rds_set_ta(cfg.rds_ta)
     tx.rds_set_ms_music(cfg.rds_ms_music)
@@ -488,8 +495,12 @@ def reconfigure_live(tx: SI4713, old: AppConfig, new: AppConfig) -> bool:
             dynamic_pty=new.di_dynamic_pty,
         )
         rt_dep_changed = True
-    if old.rds_dev_hz != new.rds_dev_hz:
-        tx.rds_set_deviation(new.rds_dev_hz)
+    if old.audio_preemph_us != new.audio_preemph_us:
+        tx.set_audio(
+            deviation_hz=7500,
+            mute=False,
+            preemph_us=new.audio_preemph_us,
+        )
     # PS
     if old.rds_ps_center != new.rds_ps_center or old.rds_ps != new.rds_ps:
         for idx, text in enumerate(new.rds_ps):

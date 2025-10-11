@@ -4,6 +4,7 @@ rf:
   antenna_cap: 3
 audio:
   stereo: true
+  preemphasis_us: 50
 rds:
   enabled: true
   pi: 0x1234

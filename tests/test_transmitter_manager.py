@@ -24,6 +24,7 @@ audio:
   comp_rel: 4
   comp_gain: 12
   lim_rel: 60
+  preemphasis_us: 50
 rds:
   enabled: true
   pi: 0x1234
@@ -36,7 +37,6 @@ rds:
   ps_center: true
   ps_speed: 8
   ps_count: 1
-  deviation_hz: 200
   di:
     stereo: true
     artificial_head: false
@@ -78,6 +78,7 @@ class StubSI4713:
         self.audio_settings: Dict[str, Any] = {}
         self.stereo_mode = True
         self.rds_enabled = True
+        self.preemphasis_us = 50
 
     def init(self, *_: object, **__: object) -> bool:
         return True
@@ -98,8 +99,16 @@ class StubSI4713:
     def set_pilot(self, *_: object, **__: object) -> None:
         return
 
-    def set_audio(self, *_: object, **__: object) -> None:
-        return
+    def set_audio(
+        self,
+        *,
+        deviation_hz: int,
+        mute: bool,
+        preemph_us: int,
+    ) -> None:
+        self.audio_settings["deviation_hz"] = deviation_hz
+        self.audio_settings["mute"] = mute
+        self.preemphasis_us = preemph_us
 
     def set_audio_processing(
         self,
@@ -138,9 +147,6 @@ class StubSI4713:
         return
 
     def rds_set_di(self, *_: object, **__: object) -> None:
-        return
-
-    def rds_set_deviation(self, *_: object, **__: object) -> None:
         return
 
     def rds_set_ps(self, *_: object, **__: object) -> None:
@@ -201,17 +207,20 @@ def test_apply_config_initialises_hardware(manager: TransmitterManager, tmp_path
     assert status["audio"]["comp_thr"] == -26
     assert status["audio"]["comp_gain"] == 12
     assert status["audio"]["stereo"] is True
+    assert status["audio"]["preemphasis_us"] == 50
     assert status["rds"]["enabled"] is True
     assert status["rds"]["configured"] is True
     assert isinstance(manager._tx, StubSI4713)  # type: ignore[attr-defined]
     assert manager._tx.audio_settings["comp_thr"] == -26  # type: ignore[attr-defined]
     assert manager._tx.audio_settings["limiter_on"] is True  # type: ignore[attr-defined]
+    assert manager._tx.preemphasis_us == 50  # type: ignore[attr-defined]
 
     queue = manager.metrics_queue()
     event = queue.get(timeout=2)
     assert event["ps"].strip() == "TESTFM"
     assert event["rds"]["pi"] == "0x1234"
     assert event["rds"]["ps_current"].strip() == "TESTFM"
+    assert event["audio"]["preemphasis_us"] == 50
     assert event["rds"]["ps_active_index"] == 0
     assert event["rds"]["configured"] is True
     assert event["audio"]["limiter_on"] is True
@@ -248,6 +257,7 @@ def test_read_config_struct_returns_full_payload(manager: TransmitterManager, tm
     assert data["audio"]["limiter_on"] is True
     assert data["audio"]["comp_thr"] == -26
     assert data["audio"]["stereo"] is True
+    assert data["audio"]["preemphasis_us"] == 50
     assert data["rds"]["enabled"] is True
     assert data["rds"]["ps"] == ["TESTFM"]
     assert data["rds"]["di"] == {
@@ -267,6 +277,7 @@ def test_apply_config_respects_stereo_and_rds_flags(
     custom_cfg = (
         SAMPLE_CFG.replace("stereo: true", "stereo: false")
         .replace("enabled: true", "enabled: false")
+        .replace("preemphasis_us: 50", "preemphasis_us: 75")
     )
     cfg_path.write_text(custom_cfg, encoding="utf-8")
 
@@ -279,6 +290,8 @@ def test_apply_config_respects_stereo_and_rds_flags(
     assert status["rds"]["configured"] is False
     assert status["rds"]["enabled"] is False
     assert status["rt_source"] == "disabled"
+    assert status["audio"]["preemphasis_us"] == 75
+    assert tx.preemphasis_us == 75
 
 
 def test_ps_rotation_advances_current_status(
@@ -330,6 +343,7 @@ def test_write_config_struct_roundtrip(manager: TransmitterManager, tmp_path: Pa
     assert "power: 100" in raw
     assert "pi: 0x1234" in raw
     assert "comp_gain: 20" in raw
+    assert "preemphasis_us: 50" in raw
 
 
 def test_write_config_struct_normalizes_ab_mode(manager: TransmitterManager, tmp_path: Path) -> None:
@@ -373,7 +387,6 @@ def test_write_config_struct_validates_ps(manager: TransmitterManager) -> None:
             "ps_center": True,
             "ps_speed": "8",
             "ps_count": "1",
-            "deviation_hz": "200",
             "di": {
                 "stereo": True,
                 "artificial_head": False,
@@ -423,6 +436,7 @@ def test_toggle_broadcast_cycle(manager: TransmitterManager, tmp_path: Path) -> 
     assert status["audio_input_dbfs"] is None
     assert status["audio"]["limiter_on"] is True
     assert status["audio"]["stereo"] is True
+    assert status["audio"]["preemphasis_us"] == 50
     assert manager._tx is None  # type: ignore[attr-defined]
 
     status = manager.set_broadcast(True)
@@ -432,6 +446,7 @@ def test_toggle_broadcast_cycle(manager: TransmitterManager, tmp_path: Path) -> 
     assert status["rds"]["configured"] is True
     assert status["audio"]["comp_thr"] == -26
     assert status["audio"]["stereo"] is True
+    assert status["audio"]["preemphasis_us"] == 50
 
 
 def test_apply_config_recovers_when_initial_tx_down(
