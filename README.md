@@ -121,6 +121,10 @@ An example is provided at **[`cfg/picastsi4713.yml`](cfg/picastsi4713.yml)**:
 * **RT rotation** → multiple texts, auto A/B switching, file override, filtering
 * **Monitoring** → health checks, ASQ logging, automatic recovery
 
+For deeper detail on the SI4713 power registers and how the CLI/web
+layers map dBµV requests onto the underlying `TX_TUNE_POWER` command,
+see [`docs/si4713-power.md`](docs/si4713-power.md).
+
 ---
 
 ## 📖 Usage Notes
