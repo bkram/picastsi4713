@@ -59,6 +59,12 @@ def _parse_int(value: Any, default: int) -> int:
 def _parse_bool(value: Any, default: bool) -> bool:
     if isinstance(value, bool):
         return value
+    # YAML may decode booleans as integers (0/1) when they originate from
+    # external sources or scripting inputs. Treat non-bool numbers as truthy
+    # in the same way Python would coerce them to ``bool`` so that configs like
+    # ``tp: 0`` behave as expected instead of falling back to the default.
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return bool(value)
     if isinstance(value, str):
         v = value.strip().lower()
         if v in {"1", "true", "yes", "on"}:

@@ -1,0 +1,358 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>PiCast SI4713 Dashboard</title>
+    <link
+      href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
+      rel="stylesheet"
+      integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH"
+      crossorigin="anonymous"
+    >
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/main.css') }}">
+  </head>
+  <body class="bg-body-tertiary">
+    <nav class="navbar navbar-expand-lg navbar-dark bg-primary shadow-sm">
+      <div class="container-fluid">
+        <span class="navbar-brand fw-semibold">PiCast SI4713</span>
+        <span class="navbar-text text-white-50">Responsive FM + RDS control surface</span>
+      </div>
+    </nav>
+    <main class="container my-4">
+      <div class="row g-4">
+        <div class="col-12 col-xl-6">
+          <div class="card shadow-sm h-100">
+            <div class="card-header d-flex justify-content-between align-items-center">
+              <h2 class="h5 mb-0">Live Broadcast Snapshot</h2>
+              <span class="badge bg-success" id="status-broadcast">ON</span>
+            </div>
+            <div class="card-body">
+              <div class="row g-3 align-items-center mb-3">
+                <div class="col-4 text-muted">Program Service</div>
+                <div class="col-8">
+                  <span class="fs-4" id="metric-ps">—</span>
+                </div>
+              </div>
+              <div class="row g-3 align-items-center mb-3">
+                <div class="col-4 text-muted">Radiotext</div>
+                <div class="col-8">
+                  <div class="d-flex flex-column">
+                    <span class="fs-5" id="metric-rt">—</span>
+                    <small class="text-muted" id="metric-rt-source">Source: —</small>
+                  </div>
+                </div>
+              </div>
+              <div class="row g-3 mb-3">
+                <div class="col-6">
+                  <div class="small text-muted">Frequency</div>
+                  <div class="fw-semibold" id="metric-frequency">—</div>
+                </div>
+                <div class="col-6">
+                  <div class="small text-muted">Power / Capacitance</div>
+                  <div class="fw-semibold">
+                    <span id="metric-power">—</span>
+                    <span class="text-muted">dBµV</span>
+                    <span class="ms-2" id="metric-cap">—</span>
+                  </div>
+                </div>
+              </div>
+              <div class="alert alert-warning d-none" id="metric-overmod">
+                Over modulation detected. Reduce input gain or deviation.
+              </div>
+              <div class="d-flex align-items-center justify-content-between">
+                <div>
+                  <div class="small text-muted">Watchdog</div>
+                  <div id="metric-watchdog">—</div>
+                </div>
+                <div class="form-check form-switch">
+                  <input class="form-check-input" type="checkbox" id="toggle-broadcast">
+                  <label class="form-check-label" for="toggle-broadcast">Broadcast</label>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="col-12 col-xl-6">
+          <div class="card shadow-sm h-100">
+            <div class="card-header">
+              <h2 class="h5 mb-0">Configuration Manager</h2>
+            </div>
+            <div class="card-body">
+              <form id="config-form" class="d-flex flex-column gap-3">
+                <div>
+                  <label for="config-select" class="form-label">Available Profiles</label>
+                  <div class="input-group">
+                    <select class="form-select" id="config-select">
+                      <option value="">Select configuration…</option>
+                      {% for item in configs %}
+                        <option value="{{ item }}">{{ item }}</option>
+                      {% endfor %}
+                    </select>
+                    <button class="btn btn-outline-secondary" id="btn-refresh" type="button">Refresh</button>
+                  </div>
+                </div>
+
+                <fieldset id="config-fields" disabled>
+                <div class="accordion" id="config-accordion">
+                  <div class="accordion-item">
+                    <h2 class="accordion-header" id="rf-heading">
+                      <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#rf-settings" aria-expanded="true" aria-controls="rf-settings">
+                        RF Settings
+                      </button>
+                    </h2>
+                    <div id="rf-settings" class="accordion-collapse collapse show" aria-labelledby="rf-heading" data-bs-parent="#config-accordion">
+                      <div class="accordion-body row g-3">
+                        <div class="col-md-4">
+                          <label for="rf-frequency" class="form-label">Frequency (kHz)</label>
+                          <input type="number" class="form-control" id="rf-frequency" min="76000" step="1">
+                        </div>
+                        <div class="col-md-4">
+                          <label for="rf-power" class="form-label">Power (dBµV)</label>
+                          <input type="number" class="form-control" id="rf-power" min="88" max="120">
+                        </div>
+                        <div class="col-md-4">
+                          <label for="rf-antenna" class="form-label">Antenna Capacitance</label>
+                          <input type="number" class="form-control" id="rf-antenna" min="0" max="255">
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="accordion-item">
+                    <h2 class="accordion-header" id="identity-heading">
+                      <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#identity-settings" aria-expanded="false" aria-controls="identity-settings">
+                        RDS Identity
+                      </button>
+                    </h2>
+                    <div id="identity-settings" class="accordion-collapse collapse" aria-labelledby="identity-heading" data-bs-parent="#config-accordion">
+                      <div class="accordion-body d-flex flex-column gap-3">
+                        <div class="row g-3">
+                          <div class="col-md-4">
+                            <label for="rds-pi" class="form-label">PI Code</label>
+                            <input type="text" class="form-control" id="rds-pi" placeholder="0x1234">
+                          </div>
+                          <div class="col-md-4">
+                            <label for="rds-pty" class="form-label">PTY</label>
+                            <input type="number" class="form-control" id="rds-pty" min="0" max="31">
+                          </div>
+                          <div class="col-md-4">
+                            <label for="rds-deviation" class="form-label">RDS Deviation (10 Hz)</label>
+                            <input type="number" class="form-control" id="rds-deviation" min="0">
+                          </div>
+                        </div>
+                        <div class="row g-3">
+                          <div class="col-md-4">
+                            <div class="form-check form-switch">
+                              <input class="form-check-input" type="checkbox" id="rds-tp">
+                              <label class="form-check-label" for="rds-tp">Traffic Programme (TP)</label>
+                            </div>
+                          </div>
+                          <div class="col-md-4">
+                            <div class="form-check form-switch">
+                              <input class="form-check-input" type="checkbox" id="rds-ta">
+                              <label class="form-check-label" for="rds-ta">Traffic Announcement (TA)</label>
+                            </div>
+                          </div>
+                          <div class="col-md-4">
+                            <div class="form-check form-switch">
+                              <input class="form-check-input" type="checkbox" id="rds-ms-music">
+                              <label class="form-check-label" for="rds-ms-music">Music Service</label>
+                            </div>
+                          </div>
+                        </div>
+                        <div>
+                          <span class="text-muted small">Decoder Identification (DI)</span>
+                          <div class="row row-cols-1 row-cols-md-2 g-2 mt-1">
+                            <div class="col">
+                              <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="di-stereo">
+                                <label class="form-check-label" for="di-stereo">Stereo</label>
+                              </div>
+                            </div>
+                            <div class="col">
+                              <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="di-artificial-head">
+                                <label class="form-check-label" for="di-artificial-head">Artificial Head</label>
+                              </div>
+                            </div>
+                            <div class="col">
+                              <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="di-compressed">
+                                <label class="form-check-label" for="di-compressed">Compressed</label>
+                              </div>
+                            </div>
+                            <div class="col">
+                              <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="di-dynamic-pty">
+                                <label class="form-check-label" for="di-dynamic-pty">Dynamic PTY</label>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="accordion-item">
+                    <h2 class="accordion-header" id="ps-heading">
+                      <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#ps-settings" aria-expanded="false" aria-controls="ps-settings">
+                        Programme Service (PS)
+                      </button>
+                    </h2>
+                    <div id="ps-settings" class="accordion-collapse collapse" aria-labelledby="ps-heading" data-bs-parent="#config-accordion">
+                      <div class="accordion-body d-flex flex-column gap-3">
+                        <div>
+                          <div class="d-flex justify-content-between align-items-center mb-2">
+                            <label class="form-label mb-0">PS Slots</label>
+                            <button type="button" class="btn btn-sm btn-outline-primary" id="btn-add-ps">Add Slot</button>
+                          </div>
+                          <div class="vstack gap-2" id="ps-list"></div>
+                        </div>
+                        <div class="row g-3">
+                          <div class="col-md-4">
+                            <label for="rds-ps-count" class="form-label">Active Slots</label>
+                            <input type="number" class="form-control" id="rds-ps-count" min="1" max="8">
+                          </div>
+                          <div class="col-md-4">
+                            <label for="rds-ps-speed" class="form-label">Cycle Speed</label>
+                            <input type="number" class="form-control" id="rds-ps-speed" min="1">
+                          </div>
+                          <div class="col-md-4 d-flex align-items-center">
+                            <div class="form-check form-switch mt-3 mt-md-0">
+                              <input class="form-check-input" type="checkbox" id="rds-ps-center">
+                              <label class="form-check-label" for="rds-ps-center">Center text</label>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="accordion-item">
+                    <h2 class="accordion-header" id="rt-heading">
+                      <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#rt-settings" aria-expanded="false" aria-controls="rt-settings">
+                        Radiotext (RT)
+                      </button>
+                    </h2>
+                    <div id="rt-settings" class="accordion-collapse collapse" aria-labelledby="rt-heading" data-bs-parent="#config-accordion">
+                      <div class="accordion-body d-flex flex-column gap-3">
+                        <div class="row g-3">
+                          <div class="col-md-6">
+                            <label for="rt-text" class="form-label">Fallback Text</label>
+                            <input type="text" class="form-control" id="rt-text" maxlength="64">
+                          </div>
+                          <div class="col-md-3">
+                            <label for="rt-speed" class="form-label">Rotation Speed (s)</label>
+                            <input type="number" class="form-control" id="rt-speed" min="1" step="0.1">
+                          </div>
+                          <div class="col-md-3 d-flex align-items-center">
+                            <div class="form-check form-switch mt-3 mt-md-0">
+                              <input class="form-check-input" type="checkbox" id="rt-center">
+                              <label class="form-check-label" for="rt-center">Center text</label>
+                            </div>
+                          </div>
+                        </div>
+                        <div>
+                          <div class="d-flex justify-content-between align-items-center mb-2">
+                            <label class="form-label mb-0">Rotation Entries</label>
+                            <button type="button" class="btn btn-sm btn-outline-primary" id="btn-add-rt-text">Add Entry</button>
+                          </div>
+                          <div class="vstack gap-2" id="rt-texts-list"></div>
+                        </div>
+                        <div>
+                          <label for="rt-file-path" class="form-label">External Script File</label>
+                          <input type="text" class="form-control" id="rt-file-path" placeholder="/path/to/rt.txt">
+                          <div class="form-text">Leave blank to disable file sourcing.</div>
+                        </div>
+                        <div>
+                          <div class="d-flex justify-content-between align-items-center mb-2">
+                            <label class="form-label mb-0">Skip Words</label>
+                            <button type="button" class="btn btn-sm btn-outline-primary" id="btn-add-skip-word">Add Word</button>
+                          </div>
+                          <div class="vstack gap-2" id="rt-skip-words-list"></div>
+                        </div>
+                        <div class="row g-3">
+                          <div class="col-md-4">
+                            <label for="rt-ab-mode" class="form-label">A/B Mode</label>
+                            <select class="form-select" id="rt-ab-mode">
+                              <option value="auto">Auto</option>
+                              <option value="legacy">Legacy</option>
+                              <option value="bank">Bank</option>
+                            </select>
+                          </div>
+                          <div class="col-md-4">
+                            <label for="rt-repeats" class="form-label">Burst Repeats</label>
+                            <input type="number" class="form-control" id="rt-repeats" min="1">
+                          </div>
+                          <div class="col-md-4">
+                            <label for="rt-gap" class="form-label">Burst Gap (ms)</label>
+                            <input type="number" class="form-control" id="rt-gap" min="0">
+                          </div>
+                        </div>
+                        <div class="row g-3">
+                          <div class="col-md-4">
+                            <label for="rt-bank" class="form-label">Bank (0/1)</label>
+                            <input type="number" class="form-control" id="rt-bank" min="0" max="1">
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="accordion-item">
+                    <h2 class="accordion-header" id="monitor-heading">
+                      <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#monitor-settings" aria-expanded="false" aria-controls="monitor-settings">
+                        Watchdog & Monitoring
+                      </button>
+                    </h2>
+                    <div id="monitor-settings" class="accordion-collapse collapse" aria-labelledby="monitor-heading" data-bs-parent="#config-accordion">
+                      <div class="accordion-body row g-3">
+                        <div class="col-md-4">
+                          <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" id="monitor-health">
+                            <label class="form-check-label" for="monitor-health">Hardware Health</label>
+                          </div>
+                        </div>
+                        <div class="col-md-4">
+                          <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" id="monitor-asq">
+                            <label class="form-check-label" for="monitor-asq">ASQ Monitoring</label>
+                          </div>
+                        </div>
+                        <div class="col-md-4">
+                          <label for="monitor-interval" class="form-label">Interval (s)</label>
+                          <input type="number" class="form-control" id="monitor-interval" min="0.1" step="0.1">
+                        </div>
+                        <div class="col-md-6">
+                          <label for="monitor-recovery-attempts" class="form-label">Recovery Attempts</label>
+                          <input type="number" class="form-control" id="monitor-recovery-attempts" min="0">
+                        </div>
+                        <div class="col-md-6">
+                          <label for="monitor-recovery-backoff" class="form-label">Recovery Backoff (s)</label>
+                          <input type="number" class="form-control" id="monitor-recovery-backoff" min="0" step="0.1">
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="d-flex gap-2">
+                  <button class="btn btn-primary" id="btn-save" type="button" disabled>Save</button>
+                  <button class="btn btn-success" id="btn-apply" type="button" disabled>Apply & Activate</button>
+                  <button class="btn btn-outline-danger ms-auto" id="btn-duplicate" type="button" disabled>Duplicate</button>
+                </div>
+                </fieldset>
+              </form>
+              <div>
+                <div class="alert d-none" role="alert" id="config-feedback"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz" crossorigin="anonymous"></script>
+    <script src="{{ url_for('static', filename='js/main.js') }}" defer></script>
+  </body>
+</html>
