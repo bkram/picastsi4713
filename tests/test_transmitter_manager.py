@@ -184,7 +184,7 @@ def test_read_config_struct_returns_full_payload(manager: TransmitterManager, tm
     cfg_path.write_text(SAMPLE_CFG, encoding="utf-8")
     data = manager.read_config_struct(Path("station.yml"))
     assert data["rf"]["frequency_khz"] == 98700
-    assert data["rds"]["pi"] == 0x1234
+    assert data["rds"]["pi"] == "0x1234"
     assert data["rds"]["ps"] == ["TESTFM"]
     assert data["rds"]["di"] == {
         "stereo": True,
@@ -204,6 +204,7 @@ def test_write_config_struct_roundtrip(manager: TransmitterManager, tmp_path: Pa
     manager.write_config_struct(Path("copy.yml"), payload)
     raw = manager.read_config(Path("copy.yml"))
     assert "power: 100" in raw
+    assert "pi: 0x1234" in raw
 
 
 def test_write_config_struct_validates_ps(manager: TransmitterManager) -> None:

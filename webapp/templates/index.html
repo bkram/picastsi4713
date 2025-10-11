@@ -130,7 +130,20 @@
                         <div class="row g-3">
                           <div class="col-md-4">
                             <label for="rds-pi" class="form-label">PI Code</label>
-                            <input type="text" class="form-control" id="rds-pi" placeholder="0x1234">
+                            <div class="input-group">
+                              <span class="input-group-text">0x</span>
+                              <input
+                                type="text"
+                                class="form-control text-uppercase"
+                                id="rds-pi"
+                                placeholder="1EE7"
+                                pattern="[0-9A-Fa-f]*"
+                                inputmode="text"
+                                maxlength="4"
+                                autocomplete="off"
+                              >
+                            </div>
+                            <div class="form-text">Enter a 16-bit hexadecimal value.</div>
                           </div>
                           <div class="col-md-4">
                             <label for="rds-pty" class="form-label">PTY</label>

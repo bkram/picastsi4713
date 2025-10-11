@@ -36,33 +36,65 @@ function formatFrequency(khz) {
   return `${(khz / 1000).toFixed(3)} MHz`;
 }
 
-function formatPiValue(value) {
+function sanitizePiDigits(raw) {
+  return (raw || '')
+    .toUpperCase()
+    .replace(/[^0-9A-F]/g, '')
+    .slice(0, 4);
+}
+
+function formatPiDigits(value) {
   if (value === null || value === undefined || value === '') {
     return '';
   }
-  const numeric = typeof value === 'number' ? value : Number(value);
-  if (!Number.isFinite(numeric)) {
-    return '';
+
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    const constrained = Math.trunc(value) & 0xffff;
+    return constrained.toString(16).toUpperCase().padStart(4, '0');
   }
-  const constrained = Math.trunc(numeric) & 0xffff;
-  return `0x${constrained.toString(16).toUpperCase().padStart(4, '0')}`;
+
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return '';
+    }
+
+    if (/^0x[0-9a-f]+$/i.test(trimmed)) {
+      const numeric = parseInt(trimmed.slice(2), 16);
+      if (Number.isFinite(numeric)) {
+        return (numeric & 0xffff).toString(16).toUpperCase().padStart(4, '0');
+      }
+      return '';
+    }
+
+    if (/^[0-9]+$/i.test(trimmed)) {
+      const numeric = parseInt(trimmed, 10);
+      if (Number.isFinite(numeric)) {
+        return (numeric & 0xffff).toString(16).toUpperCase().padStart(4, '0');
+      }
+      return '';
+    }
+
+    const sanitized = sanitizePiDigits(trimmed);
+    if (!sanitized) {
+      return '';
+    }
+    const numeric = parseInt(sanitized, 16);
+    if (!Number.isFinite(numeric)) {
+      return '';
+    }
+    return (numeric & 0xffff).toString(16).toUpperCase().padStart(4, '0');
+  }
+
+  return '';
 }
 
-function normalizePiInput(raw) {
-  const trimmed = (raw || '').trim();
-  if (!trimmed) {
+function collectPiValue() {
+  const digits = sanitizePiDigits(piInput.value);
+  if (!digits) {
     return '';
   }
-  if (/^0x[0-9a-f]+$/i.test(trimmed)) {
-    const numeric = parseInt(trimmed.slice(2), 16) & 0xffff;
-    return `0x${numeric.toString(16).toUpperCase().padStart(4, '0')}`;
-  }
-  const numeric = Number(trimmed);
-  if (Number.isFinite(numeric)) {
-    const constrained = Math.trunc(numeric) & 0xffff;
-    return `0x${constrained.toString(16).toUpperCase().padStart(4, '0')}`;
-  }
-  return trimmed;
+  return `0x${digits.padStart(4, '0')}`;
 }
 
 function markDirty() {
@@ -228,7 +260,7 @@ function populateForm(config) {
   document.getElementById('rf-power').value = config.rf?.power ?? '';
   document.getElementById('rf-antenna').value = config.rf?.antenna_cap ?? '';
 
-  piInput.value = formatPiValue(config.rds?.pi);
+  piInput.value = formatPiDigits(config.rds?.pi);
   document.getElementById('rds-pty').value = config.rds?.pty ?? '';
   document.getElementById('rds-deviation').value = config.rds?.deviation_hz ?? '';
   document.getElementById('rds-tp').checked = Boolean(config.rds?.tp);
@@ -277,7 +309,7 @@ function collectFormData() {
       antenna_cap: document.getElementById('rf-antenna').value.trim(),
     },
     rds: {
-      pi: normalizePiInput(piInput.value),
+      pi: collectPiValue(),
       pty: document.getElementById('rds-pty').value.trim(),
       deviation_hz: document.getElementById('rds-deviation').value.trim(),
       tp: document.getElementById('rds-tp').checked,
@@ -424,11 +456,17 @@ async function toggleBroadcasting(enabled) {
 configFields.addEventListener('input', markDirty);
 configFields.addEventListener('change', markDirty);
 
-piInput.addEventListener('blur', () => {
-  const normalized = normalizePiInput(piInput.value);
-  if (normalized && normalized !== piInput.value.trim()) {
-    piInput.value = normalized;
+piInput.addEventListener('input', () => {
+  const sanitized = sanitizePiDigits(piInput.value);
+  if (sanitized !== piInput.value) {
+    piInput.value = sanitized;
   }
+  markDirty();
+});
+
+piInput.addEventListener('blur', () => {
+  const digits = sanitizePiDigits(piInput.value);
+  piInput.value = digits ? digits.padStart(4, '0') : '';
 });
 
 configSelect.addEventListener('change', (event) => {

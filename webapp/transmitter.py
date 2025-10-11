@@ -181,7 +181,9 @@ class TransmitterManager:
 
     def read_config_struct(self, name: Path) -> Dict[str, Any]:
         cfg = self.load_config(name)
-        return self._serialize_config(cfg)
+        data = self._serialize_config(cfg)
+        data["rds"]["pi"] = f"0x{data['rds']['pi']:04X}"
+        return data
 
     def write_config(self, name: Path, payload: str) -> None:
         try:
@@ -380,7 +382,7 @@ class TransmitterManager:
         mapping: Dict[str, Any] = {
             "rf": serialized["rf"],
             "rds": {
-                "pi": serialized["rds"]["pi"],
+                "pi": f"0x{serialized['rds']['pi']:04X}",
                 "pty": serialized["rds"]["pty"],
                 "tp": serialized["rds"]["tp"],
                 "ta": serialized["rds"]["ta"],
