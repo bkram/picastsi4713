@@ -226,6 +226,7 @@ class TransmitterManager:
         self._next_rotation: float = time.monotonic()
         self._rt_file_mtime: Optional[float] = None
         self._broadcasting = False
+        self._broadcast_since = 0.0
         self._lock = threading.RLock()
         self._stop_event = threading.Event()
         self._metrics = Metrics()
@@ -529,6 +530,7 @@ class TransmitterManager:
                     raise ValidationError(str(retry_exc)) from retry_exc
             self._rt_file_mtime = _get_mtime(cfg.rds_rt_file)
             self._broadcasting = True
+            self._broadcast_since = time.monotonic()
             self._update_metrics(cfg, broadcasting=True)
             self._ensure_watchdog()
         return self.current_status()
@@ -562,6 +564,7 @@ class TransmitterManager:
                 except Exception as retry_exc:  # noqa: BLE001
                     raise ValidationError(str(retry_exc)) from retry_exc
             self._broadcasting = enabled
+            self._broadcast_since = time.monotonic() if enabled else 0.0
             if cfg:
                 if enabled:
                     self._ensure_watchdog()
@@ -679,13 +682,15 @@ class TransmitterManager:
             with self._lock:
                 cfg = self._config
                 tx = self._tx
+                broadcast_since = self._broadcast_since
+                broadcasting = self._broadcasting
             if not cfg or tx is None:
                 time.sleep(0.5)
                 continue
 
             interval = max(0.1, cfg.health_interval_s)
             self._metrics.watchdog_active = True
-            self._metrics.watchdog_status = "running" if self._broadcasting else "paused"
+            self._metrics.watchdog_status = "running" if broadcasting else "paused"
 
             try:
                 status = tx.tx_status()
@@ -694,7 +699,7 @@ class TransmitterManager:
                     self._metrics.frequency_khz = freq_10khz * 10
                     self._metrics.power = power_level
                     self._metrics.overmodulation = overmod
-                    self._metrics.broadcasting = self._broadcasting and power_level > 0
+                    self._metrics.broadcasting = broadcasting and power_level > 0
                     self._metrics.last_updated = time.time()
                 else:
                     self._metrics.broadcasting = False
@@ -706,7 +711,12 @@ class TransmitterManager:
             try:
                 self._maybe_reload_config(cfg, tx)
                 self._maybe_refresh_rt(cfg, tx)
-                if cfg.monitor_health and self._broadcasting and not tx.is_transmitting():
+                if (
+                    cfg.monitor_health
+                    and broadcasting
+                    and self._health_window_open(broadcast_since, cfg)
+                    and not tx.is_transmitting()
+                ):
                     self._metrics.watchdog_status = "recovering"
                     recovered = recover_tx(tx, cfg)
                     self._metrics.watchdog_status = "running" if recovered else "failed"
@@ -773,6 +783,12 @@ class TransmitterManager:
         self._metrics.ps = cfg.rds_ps[0] if cfg.rds_ps else ""
         self._metrics.last_updated = time.time()
         self._publisher.broadcast(self._metrics.to_dict())
+
+    def _health_window_open(self, since: float, cfg: AppConfig) -> bool:
+        if since <= 0.0:
+            return True
+        grace = max(cfg.health_interval_s * 3, 1.0)
+        return time.monotonic() - since >= grace
 
     def _update_metrics(self, cfg: AppConfig, broadcasting: bool) -> None:
         self._metrics.ps = cfg.rds_ps[0] if cfg.rds_ps else ""

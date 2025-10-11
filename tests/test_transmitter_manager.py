@@ -1,5 +1,6 @@
 from pathlib import Path
 import sys
+import threading
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -247,4 +248,36 @@ def test_toggle_broadcast_recovers_with_virtual_backend(
     assert status["broadcasting"] is True
     assert isinstance(manager._tx, VirtualSI4713)
 
+    manager.shutdown()
+
+
+def test_watchdog_respects_health_grace(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from webapp import transmitter as txmod
+
+    class IdleVirtual(txmod.VirtualSI4713):
+        def is_transmitting(self) -> bool:  # type: ignore[override]
+            return False
+
+    recover_called = threading.Event()
+
+    def fake_recover(tx: object, cfg: object) -> bool:
+        recover_called.set()
+        return False
+
+    monkeypatch.setattr(txmod, "VirtualSI4713", IdleVirtual)
+    monkeypatch.setattr(txmod, "recover_tx", fake_recover)
+
+    manager = TransmitterManager(config_root=tmp_path, prefer_virtual=True)
+    cfg_text = SAMPLE_CFG.replace("health: false", "health: true")
+    cfg_path = tmp_path / "station.yml"
+    cfg_path.write_text(cfg_text, encoding="utf-8")
+
+    manager.apply_config(Path("station.yml"))
+    queue = manager.metrics_queue()
+    queue.get(timeout=2)
+
+    assert not recover_called.wait(0.2)
+    assert recover_called.wait(1.0)
+
+    manager.unregister_queue(queue)
     manager.shutdown()
