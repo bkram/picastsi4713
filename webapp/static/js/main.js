@@ -28,6 +28,7 @@ const addSkipWordBtn = document.getElementById('btn-add-skip-word');
 const psList = document.getElementById('ps-list');
 const rtTextsList = document.getElementById('rt-texts-list');
 const skipWordsList = document.getElementById('rt-skip-words-list');
+const rfFrequencyInput = document.getElementById('rf-frequency');
 const piInput = document.getElementById('rds-pi');
 const audioPresetSelect = document.getElementById('audio-preset');
 const audioPresetReset = document.getElementById('audio-preset-reset');
@@ -157,6 +158,12 @@ tabButtons.forEach((button, index) => {
 
 activateTab('overview');
 
+if (rfFrequencyInput) {
+  ['change', 'blur'].forEach((eventName) => {
+    rfFrequencyInput.addEventListener(eventName, normalizeFrequencyField);
+  });
+}
+
 function formatFrequency(khz) {
   const numeric = Number(khz);
   if (!Number.isFinite(numeric) || numeric <= 0) {
@@ -170,7 +177,8 @@ function fromKhzToMHz(value) {
   if (!Number.isFinite(numeric) || numeric <= 0) {
     return '';
   }
-  return (numeric / 1000).toFixed(2);
+  const quantized = Math.round(numeric / 100);
+  return (quantized / 10).toFixed(2);
 }
 
 function toKhzFromMHz(raw) {
@@ -185,7 +193,22 @@ function toKhzFromMHz(raw) {
   if (!Number.isFinite(numeric)) {
     return trimmed;
   }
-  return Math.round(numeric * 1000).toString();
+  const quantized = Math.round(numeric * 10);
+  return (quantized * 100).toString();
+}
+
+function normalizeFrequencyField() {
+  if (!rfFrequencyInput) {
+    return;
+  }
+
+  const numeric = Number(rfFrequencyInput.value);
+  if (!Number.isFinite(numeric) || numeric <= 0) {
+    return;
+  }
+
+  const quantized = Math.round(numeric * 10);
+  rfFrequencyInput.value = (quantized / 10).toFixed(2);
 }
 
 function sanitizePiDigits(raw) {
@@ -705,6 +728,7 @@ function populateForm(config) {
   document.getElementById('rf-frequency').value = fromKhzToMHz(
     config.rf?.frequency_khz
   );
+  normalizeFrequencyField();
   document.getElementById('rf-power').value = config.rf?.power ?? '';
   document.getElementById('rf-antenna').value = config.rf?.antenna_cap ?? '';
 
@@ -766,6 +790,7 @@ function populateForm(config) {
 }
 
 function collectFormData() {
+  normalizeFrequencyField();
   return {
     rf: {
       frequency_khz: toKhzFromMHz(document.getElementById('rf-frequency').value),
