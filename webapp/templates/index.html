@@ -159,6 +159,21 @@
                 <h3 class="card__title">Audio Processing</h3>
               </header>
               <div class="card__body card__body--compact">
+                <div class="card__section">
+                  <label for="audio-preset" class="form-label">Limiter Preset</label>
+                  <div class="preset-row">
+                    <select id="audio-preset" class="pure-input-1">
+                      <option value="">Select preset…</option>
+                      <option value="broadcast">Broadcast reference (–16 dBFS)</option>
+                      <option value="music">Music – Smooth</option>
+                      <option value="voice">Speech – Articulate</option>
+                    </select>
+                    <button type="button" class="pure-button pure-button-secondary" id="audio-preset-reset">
+                      Reset to preset
+                    </button>
+                  </div>
+                  <span class="input-hint">Presets follow the Silicon Labs limiter guidance; use them to recover from clipping.</span>
+                </div>
                 <label class="checkbox">
                   <input type="checkbox" id="audio-agc">
                   <span>Automatic Gain Control (AGC)</span>

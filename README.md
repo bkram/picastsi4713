@@ -132,6 +132,9 @@ see [`docs/si4713-power.md`](docs/si4713-power.md).
 * Place a RadioText override in `rt_file.txt` to dynamically update RT.
 * Config changes in `cfg/picastsi4713.yml` are hot-reloaded (only diffs applied).
 * The script attempts recovery automatically if the transmitter stalls.
+* The SI4713 limiter clamps anything hotter than –16 dBFS; see
+  [`docs/audio-processing.md`](docs/audio-processing.md) for preset guidance
+  and recommended reset values for the dashboard.
 
 ---
 

@@ -29,6 +29,57 @@ const psList = document.getElementById('ps-list');
 const rtTextsList = document.getElementById('rt-texts-list');
 const skipWordsList = document.getElementById('rt-skip-words-list');
 const piInput = document.getElementById('rds-pi');
+const audioPresetSelect = document.getElementById('audio-preset');
+const audioPresetReset = document.getElementById('audio-preset-reset');
+
+const AUDIO_PRESETS = {
+  broadcast: {
+    label: 'Broadcast reference (–16 dBFS)',
+    values: {
+      agc_on: true,
+      limiter_on: true,
+      comp_thr: -30,
+      comp_att: 0,
+      comp_rel: 2,
+      comp_gain: 15,
+      lim_rel: 50,
+    },
+  },
+  music: {
+    label: 'Music – Smooth',
+    values: {
+      agc_on: true,
+      limiter_on: true,
+      comp_thr: -24,
+      comp_att: 2,
+      comp_rel: 8,
+      comp_gain: 12,
+      lim_rel: 80,
+    },
+  },
+  voice: {
+    label: 'Speech – Articulate',
+    values: {
+      agc_on: true,
+      limiter_on: true,
+      comp_thr: -20,
+      comp_att: 1,
+      comp_rel: 4,
+      comp_gain: 10,
+      lim_rel: 40,
+    },
+  },
+};
+
+const AUDIO_FIELD_IDS = [
+  'audio-agc',
+  'audio-limiter',
+  'audio-comp-thr',
+  'audio-comp-att',
+  'audio-comp-rel',
+  'audio-comp-gain',
+  'audio-lim-rel',
+];
 
 const feedback = document.getElementById('config-feedback');
 
@@ -101,6 +152,122 @@ function collectPiValue() {
     return '';
   }
   return `0x${digits.padStart(4, '0')}`;
+}
+
+function toInt(value) {
+  if (value === null || value === undefined || value === '') {
+    return null;
+  }
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return null;
+  }
+  return Math.trunc(numeric);
+}
+
+function normalizeAudioValues(audio) {
+  if (!audio) {
+    return null;
+  }
+
+  const normalized = {
+    agc_on: Boolean(audio.agc_on),
+    limiter_on: audio.limiter_on !== false,
+    comp_thr: toInt(audio.comp_thr),
+    comp_att: toInt(audio.comp_att),
+    comp_rel: toInt(audio.comp_rel),
+    comp_gain: toInt(audio.comp_gain),
+    lim_rel: toInt(audio.lim_rel),
+  };
+
+  if (
+    normalized.comp_thr === null ||
+    normalized.comp_att === null ||
+    normalized.comp_rel === null ||
+    normalized.comp_gain === null ||
+    normalized.lim_rel === null
+  ) {
+    return null;
+  }
+
+  return normalized;
+}
+
+function findMatchingAudioPreset(audio) {
+  const normalized = normalizeAudioValues(audio);
+  if (!normalized) {
+    return null;
+  }
+
+  for (const [id, preset] of Object.entries(AUDIO_PRESETS)) {
+    const presetValues = normalizeAudioValues(preset.values);
+    if (!presetValues) continue;
+    if (
+      presetValues.agc_on === normalized.agc_on &&
+      presetValues.limiter_on === normalized.limiter_on &&
+      presetValues.comp_thr === normalized.comp_thr &&
+      presetValues.comp_att === normalized.comp_att &&
+      presetValues.comp_rel === normalized.comp_rel &&
+      presetValues.comp_gain === normalized.comp_gain &&
+      presetValues.lim_rel === normalized.lim_rel
+    ) {
+      return id;
+    }
+  }
+
+  return null;
+}
+
+function setAudioPresetSelection(audio) {
+  if (!audioPresetSelect || !audioPresetReset) {
+    return;
+  }
+
+  if (!audio) {
+    audioPresetSelect.value = '';
+    audioPresetReset.disabled = true;
+    return;
+  }
+
+  const match = findMatchingAudioPreset(audio);
+  if (match) {
+    audioPresetSelect.value = match;
+    audioPresetReset.disabled = false;
+  } else {
+    audioPresetSelect.value = '';
+    audioPresetReset.disabled = true;
+  }
+}
+
+function readAudioFormValues() {
+  return {
+    agc_on: document.getElementById('audio-agc').checked,
+    limiter_on: document.getElementById('audio-limiter').checked,
+    comp_thr: document.getElementById('audio-comp-thr').value,
+    comp_att: document.getElementById('audio-comp-att').value,
+    comp_rel: document.getElementById('audio-comp-rel').value,
+    comp_gain: document.getElementById('audio-comp-gain').value,
+    lim_rel: document.getElementById('audio-lim-rel').value,
+  };
+}
+
+function applyAudioPresetById(id) {
+  const preset = AUDIO_PRESETS[id];
+  if (!preset) {
+    return;
+  }
+
+  suspendDirty = true;
+  document.getElementById('audio-agc').checked = Boolean(preset.values.agc_on);
+  document.getElementById('audio-limiter').checked = Boolean(preset.values.limiter_on);
+  document.getElementById('audio-comp-thr').value = preset.values.comp_thr;
+  document.getElementById('audio-comp-att').value = preset.values.comp_att;
+  document.getElementById('audio-comp-rel').value = preset.values.comp_rel;
+  document.getElementById('audio-comp-gain').value = preset.values.comp_gain;
+  document.getElementById('audio-lim-rel').value = preset.values.lim_rel;
+  suspendDirty = false;
+  setAudioPresetSelection(preset.values);
+  markDirty();
 }
 
 function renderRdsFlags(container, rds) {
@@ -220,6 +387,7 @@ function clearForm() {
   renderList(psList, [], 'Station name');
   renderList(rtTextsList, [], 'Radiotext line');
   renderList(skipWordsList, [], 'word to skip');
+  setAudioPresetSelection(null);
   suspendDirty = false;
 }
 
@@ -418,6 +586,7 @@ function populateForm(config) {
     audio.comp_gain !== undefined ? audio.comp_gain : '';
   document.getElementById('audio-lim-rel').value =
     audio.lim_rel !== undefined ? audio.lim_rel : '';
+  setAudioPresetSelection(audio);
 
   piInput.value = formatPiDigits(config.rds?.pi);
   document.getElementById('rds-pty').value = config.rds?.pty ?? '';
@@ -667,6 +836,41 @@ addSkipWordBtn.addEventListener('click', () => {
   createListItem(skipWordsList, '', 'word to skip');
   markDirty();
 });
+
+AUDIO_FIELD_IDS.forEach((id) => {
+  const el = document.getElementById(id);
+  if (!el) {
+    return;
+  }
+  const handleChange = () => {
+    if (suspendDirty) {
+      return;
+    }
+    setAudioPresetSelection(readAudioFormValues());
+  };
+  el.addEventListener('input', handleChange);
+  el.addEventListener('change', handleChange);
+});
+
+if (audioPresetSelect) {
+  audioPresetSelect.addEventListener('change', (event) => {
+    event.stopPropagation();
+    if (audioPresetReset) {
+      audioPresetReset.disabled = !audioPresetSelect.value;
+    }
+  });
+}
+
+if (audioPresetReset) {
+  audioPresetReset.addEventListener('click', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!audioPresetSelect.value) {
+      return;
+    }
+    applyAudioPresetById(audioPresetSelect.value);
+  });
+}
 
 clearForm();
 fetchStatus();
