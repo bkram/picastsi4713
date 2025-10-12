@@ -41,7 +41,7 @@ const audioPresetReset = document.getElementById('audio-preset-reset');
 const monitorIntervalInput = document.getElementById('monitor-interval');
 const monitorIntervalPreview = document.getElementById('monitor-interval-readonly');
 
-const tabButtons = Array.from(document.querySelectorAll('.tab-rail__tab'));
+const tabButtons = Array.from(document.querySelectorAll('[data-tab-trigger]'));
 const tabPanels = Array.from(document.querySelectorAll('.tab-panel'));
 
 const AUDIO_PRESETS = {
@@ -108,27 +108,37 @@ function activateTab(name) {
 
   tabButtons.forEach((button) => {
     const isActive = button.dataset.tab === name;
-    button.classList.toggle('is-active', isActive);
     button.setAttribute('aria-selected', String(isActive));
+    button.setAttribute('tabindex', isActive ? '0' : '-1');
+    const parent = button.closest('.pure-menu-item');
+    if (!parent) {
+      return;
+    }
+    if (isActive) {
+      parent.classList.add('pure-menu-selected');
+    } else {
+      parent.classList.remove('pure-menu-selected');
+    }
   });
 
   tabPanels.forEach((panel) => {
     const isActive = panel.dataset.tabPanel === name;
-    panel.classList.toggle('is-active', isActive);
-    panel.toggleAttribute('hidden', !isActive);
+    panel.hidden = !isActive;
   });
 }
 
 tabButtons.forEach((button, index) => {
-  button.addEventListener('click', () => {
+  button.addEventListener('click', (event) => {
+    event.preventDefault();
     activateTab(button.dataset.tab);
   });
 
   button.addEventListener('keydown', (event) => {
     if (event.key === 'Home') {
       event.preventDefault();
-      tabButtons[0].focus();
-      activateTab(tabButtons[0].dataset.tab);
+      const first = tabButtons[0];
+      first.focus();
+      activateTab(first.dataset.tab);
       return;
     }
 
@@ -394,13 +404,12 @@ function applyAudioPresetById(id) {
 }
 
 function renderRdsFlags(container, rds) {
-  container.innerHTML = '';
+  if (!container) {
+    return;
+  }
 
   if (!rds || Object.keys(rds).length === 0) {
-    const chip = document.createElement('span');
-    chip.className = 'chip chip--inactive';
-    chip.textContent = 'RDS Inactive';
-    container.append(chip);
+    container.textContent = 'RDS Inactive';
     return;
   }
 
@@ -416,51 +425,66 @@ function renderRdsFlags(container, rds) {
     { label: 'Art. Head', active: !!di.artificial_head },
   ];
 
-  descriptors.forEach(({ label, active }) => {
-    const chip = document.createElement('span');
-    chip.className = `chip ${active ? 'chip--active' : 'chip--inactive'}`;
-    chip.textContent = label;
-    container.append(chip);
-  });
+  const activeLabels = descriptors.filter((item) => item.active).map((item) => item.label);
+  const inactiveLabels = descriptors
+    .filter((item) => !item.active)
+    .map((item) => `${item.label} off`);
+
+  const sections = [];
+  if (activeLabels.length) {
+    sections.push(`Active: ${activeLabels.join(', ')}`);
+  }
+  if (inactiveLabels.length) {
+    sections.push(`Off: ${inactiveLabels.join(', ')}`);
+  }
+  container.textContent = sections.join(' | ') || '—';
 }
 
 function renderRdsPs(container, metaEl, rds) {
-  container.innerHTML = '';
-  if (metaEl) {
-    metaEl.textContent = '';
-    metaEl.classList.add('is-hidden');
-  }
-
-  const rawValues = Array.isArray(rds?.ps)
-    ? rds.ps.filter((item) => item && item.trim().length > 0)
-    : [];
-  const formattedValues = Array.isArray(rds?.ps_formatted) && rds.ps_formatted.length
-    ? rds.ps_formatted
-    : rawValues;
-  const values = formattedValues.length ? formattedValues : rawValues;
-  const activeIndex = Number.isFinite(rds?.ps_active_index) ? Number(rds.ps_active_index) : -1;
-
-  if (!values.length) {
-    container.textContent = '—';
+  if (!container) {
     return;
   }
 
-  values.forEach((value, index) => {
-    const chip = document.createElement('span');
-    const display = typeof value === 'string' ? value.trim() : '';
-    chip.className = 'chip chip--inactive';
-    chip.textContent = display || '—';
-    if (index === activeIndex) {
-      chip.classList.remove('chip--inactive');
-      chip.classList.add('chip--active');
-    }
-    container.append(chip);
-  });
+  container.textContent = '—';
+  if (metaEl) {
+    metaEl.textContent = '';
+    metaEl.hidden = true;
+  }
+
+  if (!rds) {
+    return;
+  }
+
+  const rawValues = Array.isArray(rds.ps)
+    ? rds.ps.filter((item) => item && item.trim().length > 0)
+    : [];
+  const formattedValues = Array.isArray(rds.ps_formatted) && rds.ps_formatted.length
+    ? rds.ps_formatted
+    : rawValues;
+  const values = formattedValues.length ? formattedValues : rawValues;
+  const activeIndex = Number.isFinite(rds.ps_active_index) ? Number(rds.ps_active_index) : -1;
+
+  if (!values.length) {
+    return;
+  }
+
+  container.textContent = values
+    .map((value, index) => {
+      const display = typeof value === 'string' ? value.trim() : '';
+      if (!display) {
+        return '—';
+      }
+      if (index === activeIndex) {
+        return `${display} (current)`;
+      }
+      return display;
+    })
+    .join(', ');
 
   if (metaEl) {
-    const count = Number.isFinite(rds?.ps_count) ? Number(rds.ps_count) : values.length;
-    const speed = Number.isFinite(rds?.ps_speed) ? Number(rds.ps_speed) : null;
-    const activeText = typeof rds?.ps_current === 'string' ? rds.ps_current.trim() : '';
+    const count = Number.isFinite(rds.ps_count) ? Number(rds.ps_count) : values.length;
+    const speed = Number.isFinite(rds.ps_speed) ? Number(rds.ps_speed) : null;
+    const activeText = typeof rds.ps_current === 'string' ? rds.ps_current.trim() : '';
     const parts = [];
     if (activeText) {
       parts.push(`Current: ${activeText}`);
@@ -469,14 +493,16 @@ function renderRdsPs(container, metaEl, rds) {
     if (speed !== null) {
       parts.push(`Speed: ${speed}`);
     }
-    if (rds?.ps_center !== undefined) {
+    if (rds.ps_center !== undefined) {
       parts.push(rds.ps_center ? 'Centered' : 'Left aligned');
     }
-    if (rds?.configured === false) {
+    if (rds.configured === false) {
       parts.unshift('RDS disabled');
     }
-    metaEl.textContent = parts.join(' · ');
-    metaEl.classList.remove('is-hidden');
+    if (parts.length) {
+      metaEl.textContent = parts.join(' · ');
+      metaEl.hidden = false;
+    }
   }
 }
 
@@ -544,20 +570,24 @@ function clearForm() {
 
 function createListItem(container, value, placeholder) {
   const wrapper = document.createElement('div');
-  wrapper.className = 'config-list-item';
+  wrapper.className = 'pure-g';
 
+  const inputCol = document.createElement('div');
+  inputCol.className = 'pure-u-1 pure-u-md-3-4';
   const input = document.createElement('input');
   input.type = 'text';
   input.className = 'pure-input-1';
   input.placeholder = placeholder;
   input.value = value || '';
   input.addEventListener('input', markDirty);
+  inputCol.append(input);
 
+  const buttonCol = document.createElement('div');
+  buttonCol.className = 'pure-u-1 pure-u-md-1-4';
   const removeBtn = document.createElement('button');
   removeBtn.type = 'button';
-  removeBtn.className = 'icon-button';
-  removeBtn.innerHTML = '&times;';
-  removeBtn.setAttribute('aria-label', 'Remove');
+  removeBtn.className = 'pure-button';
+  removeBtn.textContent = 'Remove';
   removeBtn.addEventListener('click', () => {
     container.removeChild(wrapper);
     if (!container.children.length) {
@@ -565,8 +595,9 @@ function createListItem(container, value, placeholder) {
     }
     markDirty();
   });
+  buttonCol.append(removeBtn);
 
-  wrapper.append(input, removeBtn);
+  wrapper.append(inputCol, buttonCol);
   container.append(wrapper);
 }
 
@@ -585,7 +616,6 @@ function readList(container) {
 function setRdsEnabledState(enabled) {
   const isEnabled = Boolean(enabled);
   rdsSections.forEach((section) => {
-    section.classList.toggle('is-disabled', !isEnabled);
     section.querySelectorAll('input, select, textarea, button').forEach((element) => {
       if (element === rdsToggle) return;
       element.disabled = !isEnabled;
@@ -601,7 +631,7 @@ function updateStatus(data) {
   freqEl.textContent = formatFrequency(data.frequency_khz);
   powerEl.textContent = data.power ?? '—';
   capEl.textContent = data.antenna_cap ?? '—';
-  overmodEl.classList.toggle('is-hidden', !data.overmodulation);
+  overmodEl.hidden = !data.overmodulation;
   watchdogEl.textContent = data.watchdog_status || '—';
   if (audioLevelEl && audioStatusEl) {
     const audio = data.audio || {};
@@ -614,15 +644,12 @@ function updateStatus(data) {
 
     const limiterEnabled = audio.limiter_on !== undefined ? !!audio.limiter_on : true;
     let statusText = 'Telemetry idle';
-    let statusClass = '';
     if (levelValue === null) {
       statusText = 'Telemetry idle';
     } else if (audio.overmod || data.overmodulation) {
       statusText = 'Clipping';
-      statusClass = 'is-danger';
     } else if (levelValue >= -1) {
       statusText = 'Hot input';
-      statusClass = 'is-warning';
     } else if (!limiterEnabled) {
       statusText = 'Limiter off';
     } else {
@@ -632,10 +659,6 @@ function updateStatus(data) {
     const stereoLabel = audio.stereo === false ? 'Mono composite' : 'Stereo composite';
     const statusParts = [stereoLabel, statusText];
     audioStatusEl.textContent = statusParts.join(' · ');
-    audioStatusEl.classList.remove('is-warning', 'is-danger');
-    if (statusClass) {
-      audioStatusEl.classList.add(statusClass);
-    }
   }
   const rds = data.rds || {};
   if (rdsPiEl) {
@@ -659,8 +682,6 @@ function updateStatus(data) {
 
   const broadcasting = Boolean(data.broadcasting);
   broadcastBadge.textContent = broadcasting ? 'ON' : 'OFF';
-  broadcastBadge.classList.toggle('status-pill--on', broadcasting);
-  broadcastBadge.classList.toggle('status-pill--off', !broadcasting);
   toggleBroadcast.checked = broadcasting;
   toggleBroadcast.disabled = !data.config_name;
 
@@ -736,15 +757,17 @@ async function refreshConfigs() {
 }
 
 function showFeedback(message, type = 'success') {
-  feedback.textContent = message;
-  feedback.classList.remove('is-hidden', 'notice--success', 'notice--error');
-  feedback.classList.add('notice', 'notice--inline');
-  if (type === 'success') {
-    feedback.classList.add('notice--success');
-  } else {
-    feedback.classList.add('notice--error');
+  if (!feedback) {
+    return;
   }
-  setTimeout(() => feedback.classList.add('is-hidden'), 4000);
+
+  const prefix = type === 'success' ? 'Success:' : 'Error:';
+  feedback.textContent = `${prefix} ${message}`;
+  feedback.hidden = false;
+  setTimeout(() => {
+    feedback.hidden = true;
+    feedback.textContent = '';
+  }, 4000);
 }
 
 function populateForm(config) {
