@@ -95,7 +95,8 @@ profiles and watch telemetry from a browser. To start it locally:
    When `--debug` is omitted the server runs in production mode with the
    reloader disabled.
 
-4. Open http://127.0.0.1:5000 in a browser to access the dashboard.
+4. Open http://localhost:5000 (or replace `localhost` with the server's IP)
+   in a browser to access the dashboard.
 
 The background watchdog and broadcast controls mirror the CLI behaviour,
 so any profile you apply from the UI immediately affects the live

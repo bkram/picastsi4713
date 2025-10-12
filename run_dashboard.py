@@ -12,7 +12,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--host",
-        default=os.environ.get("FLASK_RUN_HOST", "127.0.0.1"),
+        default=os.environ.get("FLASK_RUN_HOST", "0.0.0.0"),
         help="Hostname or IP to bind (default: %(default)s)",
     )
     parser.add_argument(
