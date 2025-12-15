@@ -10,7 +10,7 @@ import logging
 import os
 import threading
 import time
-from typing import List, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 
 # RPi backend (default on Raspberry Pi)
 try:
@@ -40,14 +40,18 @@ class _Ft232hBus:
     def __init__(self, port: "pyftdi.i2c.I2cPort") -> None:  # type: ignore[name-defined]
         self._port = port
 
-    def write_i2c_block_data(self, addr: int, cmd: int, data: List[int]) -> None:  # noqa: ARG002
+    def write_i2c_block_data(
+        self, addr: int, cmd: int, data: List[int]
+    ) -> None:  # noqa: ARG002
         payload = bytes([cmd, *data])
         self._port.write(payload)
 
     def read_byte(self, addr: int) -> int:  # noqa: ARG002
         return int(self._port.read(1)[0])
 
-    def read_i2c_block_data(self, addr: int, cmd: int, length: int) -> List[int]:  # noqa: ARG002
+    def read_i2c_block_data(
+        self, addr: int, cmd: int, length: int
+    ) -> List[int]:  # noqa: ARG002
         self._port.write(bytes([cmd]))
         data = self._port.read(length)
         return list(data)
@@ -69,7 +73,9 @@ class _Ft232hGpio:
         self._pin = pin
         self._mask = 1 << pin
         self._gpio = ctrl.get_gpio()
-        self._gpio.set_direction(self._mask, self._mask)  # configure reset pin as output
+        self._gpio.set_direction(
+            self._mask, self._mask
+        )  # configure reset pin as output
         self._state = 0
 
     def setwarnings(self, flag: bool) -> None:  # noqa: ARG002
@@ -80,11 +86,15 @@ class _Ft232hGpio:
 
     def setup(self, pin: int, mode: int) -> None:  # noqa: ARG002
         if pin != self._pin:
-            raise ValueError(f"FT232H reset pin mismatch: expected {self._pin}, got {pin}")
+            raise ValueError(
+                f"FT232H reset pin mismatch: expected {self._pin}, got {pin}"
+            )
 
     def output(self, pin: int, value: int) -> None:
         if pin != self._pin:
-            raise ValueError(f"FT232H reset pin mismatch: expected {self._pin}, got {pin}")
+            raise ValueError(
+                f"FT232H reset pin mismatch: expected {self._pin}, got {pin}"
+            )
         if value:
             self._state |= self._mask
         else:
@@ -260,6 +270,8 @@ class SI4713:
 
         self._ftdi_backend: Optional[_Ft232hBackend] = None
         self._blinka_backend: Optional[_BlinkaBackend] = None
+        self.bus: Any = None
+        self.gpio: Any = None
 
         use_rpi = backend in {"auto", "rpi"} and GPIO is not None and smbus2 is not None
         if use_rpi:
@@ -284,13 +296,38 @@ class SI4713:
                 )
             else:
                 url = ftdi_url or os.getenv("SI4713_FT232H_URL", "ftdi://ftdi:232h/1")
-                reset_pin = int(os.getenv("SI4713_FT232H_RESET_PIN", str(ftdi_reset_pin)))
-                self._ftdi_backend = _Ft232hBackend(url, reset_pin, i2c_addr)
-                self.bus = self._ftdi_backend.bus
-                self.gpio = self._ftdi_backend.gpio
-                self._close_bus = getattr(self.bus, "close", lambda: None)
-                self._cleanup_gpio = getattr(self.gpio, "cleanup", lambda: None)
-                logger.info("SI4713 backend: FT232H (%s), reset pin=%d", url, reset_pin)
+                reset_pin = int(
+                    os.getenv("SI4713_FT232H_RESET_PIN", str(ftdi_reset_pin))
+                )
+                try:
+                    self._ftdi_backend = _Ft232hBackend(url, reset_pin, i2c_addr)
+                except ImportError as exc:
+                    if backend in {"auto", "ft232h"} and GPIO is not None:
+                        if smbus2 is None:
+                            raise ImportError(
+                                "pyftdi missing and smbus2 not available; install smbus2 "
+                                "or set adapter to ft232h with pyftdi installed"
+                            ) from exc
+                        logger.warning(
+                            "pyftdi missing; falling back to RPi backend (bus=%d). "
+                            "Set adapter=rpi/auto for Pi or install pyftdi for FT232H.",
+                            i2c_bus,
+                        )
+                        self.bus = smbus2.SMBus(i2c_bus)  # type: ignore[assignment]
+                        self.gpio = GPIO  # type: ignore[assignment]
+                        self._close_bus = self.bus.close
+                        self._cleanup_gpio = getattr(self.gpio, "cleanup", lambda: None)
+                        logger.info("SI4713 backend: RPi/smbus2 (fallback)")
+                    else:
+                        raise
+                else:
+                    self.bus = self._ftdi_backend.bus
+                    self.gpio = self._ftdi_backend.gpio
+                    self._close_bus = getattr(self.bus, "close", lambda: None)
+                    self._cleanup_gpio = getattr(self.gpio, "cleanup", lambda: None)
+                    logger.info(
+                        "SI4713 backend: FT232H (%s), reset pin=%d", url, reset_pin
+                    )
 
         self.lock: threading.Lock = threading.Lock()
         self.buf: List[int] = [0] * 10
@@ -350,22 +387,27 @@ class SI4713:
     # ---------- Low-level helpers ----------
 
     def _write_buf(self, nbytes: int) -> bool:
-        try:
-            with self.lock:
-                self.bus.write_i2c_block_data(
-                    self.addr, self.buf[0], self.buf[1:nbytes]
+        retries = 3
+        for attempt in range(1, retries + 1):
+            try:
+                with self.lock:
+                    self.bus.write_i2c_block_data(
+                        self.addr, self.buf[0], self.buf[1:nbytes]
+                    )
+                    time.sleep(0.06)
+                    for _ in range(50):
+                        status = self.bus.read_byte(self.addr)
+                        if status & 0x80:
+                            return True
+                        time.sleep(0.002)
+                    logger.error("CTS timeout after write")
+                    return False
+            except Exception as exc:  # noqa: BLE001
+                logger.error(
+                    "I2C write error (attempt %d/%d): %s", attempt, retries, exc
                 )
-                time.sleep(0.054)
-                for _ in range(10):
-                    status = self.bus.read_byte(self.addr)
-                    if status & 0x80:
-                        return True
-                    time.sleep(0.001)
-                logger.error("CTS timeout after write")
-                return False
-        except Exception as exc:  # noqa: BLE001
-            logger.error("I2C write error: %s", exc)
-            return False
+                time.sleep(0.01 * attempt)
+        return False
 
     def _set_prop(self, prop: int, val: int) -> bool:
         self.buf[0] = 0x12
@@ -394,7 +436,9 @@ class SI4713:
         self.buf[1] = 0x00
         self.buf[2] = (f10k >> 8) & 0xFF
         self.buf[3] = f10k & 0xFF
-        self._write_buf(4)
+        if not self._write_buf(4):
+            time.sleep(0.01)
+            self._write_buf(4)
 
     def set_output(self, level: int, cap: int) -> None:
         level = max(0, min(255, level))
@@ -404,7 +448,9 @@ class SI4713:
         self.buf[2] = 0x00
         self.buf[3] = level
         self.buf[4] = cap
-        self._write_buf(5)
+        if not self._write_buf(5):
+            time.sleep(0.01)
+            self._write_buf(5)
 
     def enable_mpx(self, on: bool) -> None:
         if on:
@@ -642,11 +688,19 @@ class SI4713:
                 resp = self.bus.read_i2c_block_data(self.addr, 0, 8)
             freq_10khz = (resp[2] << 8) | resp[3]
             power_level = resp[5]
+            antcap = resp[6] if len(resp) > 6 else 0
             overmod = bool(resp[1] & 0x04)
-            return (freq_10khz, power_level, overmod, 0)
+            return (freq_10khz, power_level, overmod, antcap)
         except Exception as exc:  # noqa: BLE001
             logger.error("tx_status failed: %s", exc)
             return None
+
+    def read_antenna_cap(self) -> Optional[int]:
+        """Return the last reported antenna capacitance (0-191) if available."""
+        st = self.tx_status()
+        if st is None:
+            return None
+        return st[3]
 
     def is_transmitting(self) -> bool:
         st = self.tx_status()
