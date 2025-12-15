@@ -39,8 +39,8 @@ logger = logging.getLogger("tx")
 # Hardware constants
 # ---------------------------------------------------------------------
 
-RESET_PIN: int = 5
-REFCLK_HZ: int = 32768
+RESET_PIN: int = int(os.getenv("SI4713_RESET_PIN", "5"))
+REFCLK_HZ: int = int(os.getenv("SI4713_REFCLK_HZ", "32768"))
 
 # ---------------------------------------------------------------------
 # Helpers
@@ -316,7 +316,8 @@ def _burst_rt(
     """
     tx.set_rt_ab_mode(ab_mode)
     # First send (potential AB flip in 'auto')
-    tx.rds_set_rt(text, bank=bank if ab_mode == "bank" else None)
+    bank_used = tx.rds_set_rt(text, bank=bank if ab_mode == "bank" else None)
+    logger.info("RT send bank=%s: %r", "B" if bank_used else "A", text)
     # More sends (same content => no AB flip in 'auto')
     for _ in range(max(0, repeats - 1)):
         time.sleep(gap_ms / 1000.0)
@@ -487,13 +488,43 @@ def main() -> None:
     parser.add_argument(
         "--cfg", type=str, required=True, help="Path to YAML configuration file"
     )
+    parser.add_argument(
+        "--backend",
+        type=str,
+        choices=["auto", "rpi", "ft232h", "ft232h_blinka", "blinka"],
+        default=os.getenv("SI4713_BACKEND", "auto"),
+        help="Hardware backend: auto (default), rpi, ft232h (pyftdi), or ft232h_blinka",
+    )
+    parser.add_argument(
+        "--ftdi-url",
+        type=str,
+        default=os.getenv("SI4713_FT232H_URL", "ftdi://ftdi:232h/1"),
+        help="pyftdi device URL when using FT232H backend",
+    )
+    parser.add_argument(
+        "--ftdi-reset-pin",
+        type=int,
+        default=int(os.getenv("SI4713_FT232H_RESET_PIN", str(RESET_PIN))),
+        help="FT232H GPIO pin (0-7) used for SI4713 RESET (default uses RESET_PIN)",
+    )
+    parser.add_argument(
+        "--i2c-bus",
+        type=int,
+        default=int(os.getenv("SI4713_I2C_BUS", "1")),
+        help="I2C bus number (RPi backend only)",
+    )
     args = parser.parse_args()
 
     cfg_path = args.cfg
     cfg = load_yaml_config(cfg_path)
     last_cfg_mtime = _get_mtime(cfg_path)
 
-    tx = SI4713()
+    tx = SI4713(
+        i2c_bus=args.i2c_bus,
+        backend=args.backend,
+        ftdi_url=args.ftdi_url,
+        ftdi_reset_pin=args.ftdi_reset_pin,
+    )
 
     last_rt: Optional[str]
     rt_source: str

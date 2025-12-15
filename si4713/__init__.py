@@ -7,12 +7,21 @@ Based on work by PE5PVB (https://github.com/PE5PVB/si4713)
 from __future__ import annotations
 
 import logging
+import os
 import threading
 import time
 from typing import List, Optional, Tuple
 
-import RPi.GPIO as GPIO
-import smbus2
+# RPi backend (default on Raspberry Pi)
+try:
+    import RPi.GPIO as GPIO  # type: ignore[import-not-found]
+except Exception:  # noqa: BLE001
+    GPIO = None  # type: ignore[assignment]
+
+try:
+    import smbus2  # type: ignore[import-not-found]
+except Exception:  # noqa: BLE001
+    smbus2 = None  # type: ignore[assignment]
 
 logger = logging.getLogger(__name__)
 
@@ -20,12 +29,269 @@ I2C_ADDRESS: int = 0x63
 I2C_BUS: int = 1
 
 
+# ---------------------------------------------------------------------
+# FT232H helpers
+# ---------------------------------------------------------------------
+
+
+class _Ft232hBus:
+    """Minimal SMBus-like wrapper around pyftdi's I2C port."""
+
+    def __init__(self, port: "pyftdi.i2c.I2cPort") -> None:  # type: ignore[name-defined]
+        self._port = port
+
+    def write_i2c_block_data(self, addr: int, cmd: int, data: List[int]) -> None:  # noqa: ARG002
+        payload = bytes([cmd, *data])
+        self._port.write(payload)
+
+    def read_byte(self, addr: int) -> int:  # noqa: ARG002
+        return int(self._port.read(1)[0])
+
+    def read_i2c_block_data(self, addr: int, cmd: int, length: int) -> List[int]:  # noqa: ARG002
+        self._port.write(bytes([cmd]))
+        data = self._port.read(length)
+        return list(data)
+
+    def close(self) -> None:
+        """Match smbus API; controller owns the port."""
+        return None
+
+
+class _Ft232hGpio:
+    """Shim that mimics the tiny subset of RPi.GPIO we use for reset."""
+
+    BCM = 1
+    OUT = 1
+    HIGH = 1
+    LOW = 0
+
+    def __init__(self, ctrl: "pyftdi.i2c.I2cController", pin: int) -> None:  # type: ignore[name-defined]
+        self._pin = pin
+        self._mask = 1 << pin
+        self._gpio = ctrl.get_gpio()
+        self._gpio.set_direction(self._mask, self._mask)  # configure reset pin as output
+        self._state = 0
+
+    def setwarnings(self, flag: bool) -> None:  # noqa: ARG002
+        return None
+
+    def setmode(self, mode: int) -> None:  # noqa: ARG002
+        return None
+
+    def setup(self, pin: int, mode: int) -> None:  # noqa: ARG002
+        if pin != self._pin:
+            raise ValueError(f"FT232H reset pin mismatch: expected {self._pin}, got {pin}")
+
+    def output(self, pin: int, value: int) -> None:
+        if pin != self._pin:
+            raise ValueError(f"FT232H reset pin mismatch: expected {self._pin}, got {pin}")
+        if value:
+            self._state |= self._mask
+        else:
+            self._state &= ~self._mask
+        self._gpio.write(self._state)
+
+    def cleanup(self) -> None:
+        try:
+            self._gpio.write(self._state & ~self._mask)
+        except Exception:
+            pass
+
+
+class _Ft232hBackend:
+    """Bundle FT232H I2C + GPIO helpers."""
+
+    def __init__(self, url: str, reset_pin: int, addr: int) -> None:
+        try:
+            from pyftdi.i2c import I2cController  # type: ignore[import-not-found]
+        except Exception as exc:  # noqa: BLE001
+            raise ImportError(
+                "pyftdi is required for the FT232H backend (pip install pyftdi)"
+            ) from exc
+
+        self.ctrl = I2cController()
+        self.ctrl.configure(url)
+        self.port = self.ctrl.get_port(addr)
+        self.bus = _Ft232hBus(self.port)
+        self.gpio = _Ft232hGpio(self.ctrl, reset_pin)
+
+    def close(self) -> None:
+        try:
+            self.ctrl.terminate()
+        except Exception:
+            return None
+
+
+# ---------------------------------------------------------------------
+# Blinka FT232H helpers (board/busio/digitalio)
+# ---------------------------------------------------------------------
+
+
+class _BlinkaBus:
+    """SMBus-like shim using Adafruit Blinka busio.I2C."""
+
+    def __init__(self, i2c: "busio.I2C") -> None:  # type: ignore[name-defined]
+        self._i2c = i2c
+        self._locked = False
+        self._ensure_lock()
+
+    def _ensure_lock(self) -> None:
+        if self._locked:
+            return
+        # Try to lock the bus; sleep briefly between attempts.
+        for _ in range(1000):
+            if self._i2c.try_lock():
+                self._locked = True
+                return
+            time.sleep(0.001)
+        raise RuntimeError("Failed to lock I2C bus (Blinka)")
+
+    def write_i2c_block_data(self, addr: int, cmd: int, data: List[int]) -> None:
+        self._ensure_lock()
+        self._i2c.writeto(addr, bytes([cmd, *data]))
+
+    def read_byte(self, addr: int) -> int:
+        self._ensure_lock()
+        buf = bytearray(1)
+        self._i2c.readfrom_into(addr, buf)
+        return int(buf[0])
+
+    def read_i2c_block_data(self, addr: int, cmd: int, length: int) -> List[int]:
+        self._ensure_lock()
+        buf = bytearray(length)
+        self._i2c.writeto_then_readfrom(addr, bytes([cmd]), buf)
+        return list(buf)
+
+    def close(self) -> None:
+        try:
+            if self._locked:
+                self._i2c.unlock()
+        finally:
+            self._locked = False
+            if hasattr(self._i2c, "deinit"):
+                try:
+                    self._i2c.deinit()  # type: ignore[attr-defined]
+                except Exception:
+                    pass
+
+
+class _BlinkaGpio:
+    """GPIO shim using Blinka digitalio for the reset pin only."""
+
+    BCM = 1
+    OUT = 1
+    HIGH = 1
+    LOW = 0
+
+    def __init__(self, pin: "digitalio.DigitalInOut") -> None:  # type: ignore[name-defined]
+        from digitalio import Direction  # type: ignore import  # noqa: WPS433
+
+        self._pin = pin
+        self._pin.direction = Direction.OUTPUT
+
+    def setwarnings(self, flag: bool) -> None:  # noqa: ARG002
+        return None
+
+    def setmode(self, mode: int) -> None:  # noqa: ARG002
+        return None
+
+    def setup(self, pin: int, mode: int) -> None:  # noqa: ARG002
+        return None
+
+    def output(self, pin: int, value: int) -> None:  # noqa: ARG002
+        self._pin.value = bool(value)
+
+    def cleanup(self) -> None:
+        try:
+            if hasattr(self._pin, "deinit"):
+                self._pin.deinit()
+        except Exception:
+            pass
+
+
+class _BlinkaBackend:
+    """Bundle Blinka I2C + GPIO helpers (for FT232H with BLINKA_FT232H=1)."""
+
+    def __init__(self, reset_pin: int) -> None:
+        try:
+            import board  # type: ignore[import-not-found]
+            import busio  # type: ignore[import-not-found]
+            import digitalio  # type: ignore[import-not-found]
+        except Exception as exc:  # noqa: BLE001
+            raise ImportError(
+                "Adafruit Blinka is required for the 'ft232h_blinka' backend "
+                "(pip install adafruit-blinka)"
+            ) from exc
+
+        i2c = busio.I2C(board.SCL, board.SDA)
+        pin_name = f"D{reset_pin}"
+        try:
+            reset_pin_obj = getattr(board, pin_name)
+        except AttributeError as exc:  # noqa: BLE001
+            raise ValueError(f"Blinka reset pin not found: {pin_name}") from exc
+
+        self.bus = _BlinkaBus(i2c)
+        self.gpio = _BlinkaGpio(digitalio.DigitalInOut(reset_pin_obj))
+
+    def close(self) -> None:
+        try:
+            self.bus.close()
+        finally:
+            try:
+                self.gpio.cleanup()
+            except Exception:
+                pass
+
+
 class SI4713:
     """Control class for SI4713 FM transmitter with RDS."""
 
-    def __init__(self, i2c_addr: int = I2C_ADDRESS, i2c_bus: int = I2C_BUS) -> None:
+    def __init__(
+        self,
+        i2c_addr: int = I2C_ADDRESS,
+        i2c_bus: int = I2C_BUS,
+        backend: str = "auto",
+        ftdi_url: Optional[str] = None,
+        ftdi_reset_pin: int = 5,
+    ) -> None:
+        backend = (backend or "auto").lower()
         self.addr: int = i2c_addr
-        self.bus: smbus2.SMBus = smbus2.SMBus(i2c_bus)
+        self.backend: str = backend
+
+        self._ftdi_backend: Optional[_Ft232hBackend] = None
+        self._blinka_backend: Optional[_BlinkaBackend] = None
+
+        use_rpi = backend in {"auto", "rpi"} and GPIO is not None and smbus2 is not None
+        if use_rpi:
+            self.bus = smbus2.SMBus(i2c_bus)  # type: ignore[assignment]
+            self.gpio = GPIO  # type: ignore[assignment]
+            self._close_bus = self.bus.close
+            self._cleanup_gpio = getattr(self.gpio, "cleanup", lambda: None)
+            logger.info("SI4713 backend: RPi/smbus2 (bus=%d)", i2c_bus)
+        else:
+            # Prefer Blinka when explicitly requested or when BLINKA_FT232H is set.
+            want_blinka = backend in {"blinka", "ft232h_blinka"} or (
+                backend == "auto" and os.getenv("BLINKA_FT232H") == "1"
+            )
+            if want_blinka:
+                self._blinka_backend = _BlinkaBackend(ftdi_reset_pin)
+                self.bus = self._blinka_backend.bus
+                self.gpio = self._blinka_backend.gpio
+                self._close_bus = getattr(self.bus, "close", lambda: None)
+                self._cleanup_gpio = getattr(self.gpio, "cleanup", lambda: None)
+                logger.info(
+                    "SI4713 backend: Blinka FT232H (reset pin=D%d)", ftdi_reset_pin
+                )
+            else:
+                url = ftdi_url or os.getenv("SI4713_FT232H_URL", "ftdi://ftdi:232h/1")
+                reset_pin = int(os.getenv("SI4713_FT232H_RESET_PIN", str(ftdi_reset_pin)))
+                self._ftdi_backend = _Ft232hBackend(url, reset_pin, i2c_addr)
+                self.bus = self._ftdi_backend.bus
+                self.gpio = self._ftdi_backend.gpio
+                self._close_bus = getattr(self.bus, "close", lambda: None)
+                self._cleanup_gpio = getattr(self.gpio, "cleanup", lambda: None)
+                logger.info("SI4713 backend: FT232H (%s), reset pin=%d", url, reset_pin)
+
         self.lock: threading.Lock = threading.Lock()
         self.buf: List[int] = [0] * 10
 
@@ -45,16 +311,16 @@ class SI4713:
 
                 self.lock = threading.Lock()
 
-            GPIO.setwarnings(False)
-            GPIO.setmode(GPIO.BCM)
-            GPIO.setup(rst_pin, GPIO.OUT)
+            self.gpio.setwarnings(False)
+            self.gpio.setmode(self.gpio.BCM)
+            self.gpio.setup(rst_pin, self.gpio.OUT)
 
             # HW reset: High → Low → High (keep your original timings)
-            GPIO.output(rst_pin, GPIO.HIGH)
+            self.gpio.output(rst_pin, self.gpio.HIGH)
             time.sleep(0.05)
-            GPIO.output(rst_pin, GPIO.LOW)
+            self.gpio.output(rst_pin, self.gpio.LOW)
             time.sleep(0.05)
-            GPIO.output(rst_pin, GPIO.HIGH)
+            self.gpio.output(rst_pin, self.gpio.HIGH)
             time.sleep(0.05)
 
             with self.lock:
@@ -114,7 +380,7 @@ class SI4713:
 
     def hw_reset(self, rst_pin: int) -> None:
         try:
-            GPIO.output(rst_pin, GPIO.LOW)
+            self.gpio.output(rst_pin, self.gpio.LOW)
             time.sleep(0.05)
             logger.info("Hardware reset asserted (TX stopped)")
         except Exception as exc:  # noqa: BLE001
@@ -291,7 +557,7 @@ class SI4713:
         *,
         force_new_message: bool = False,
         cr_terminate: bool = True,
-    ) -> None:
+    ) -> int:
         """
         Send RadioText using Group 2A (32 chars here) with UECP-like A/B rules.
 
@@ -362,6 +628,7 @@ class SI4713:
             idx += 4
 
         self._last_rt = payload
+        return bank_to_send
 
     # ---------- Status / health ----------
 
@@ -418,10 +685,10 @@ class SI4713:
 
     def close(self) -> None:
         try:
-            GPIO.cleanup()
+            self._close_bus()
         except Exception:
             pass
         try:
-            self.bus.close()
+            self._cleanup_gpio()
         except Exception:
             pass

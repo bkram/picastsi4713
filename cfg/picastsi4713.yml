@@ -1,3 +1,4 @@
+---
 rf:
   frequency_khz: 108000 
   power:  115
@@ -26,17 +27,12 @@ rds:
     center: false 
     file_path: "./rt_file.txt"
     skip_words: ["skip", "badword"]
-    force_flush: true
-    flush_cycles: 3
-    push_repeats: 6
-    push_gap_ms: 100
-    ab_mode: "legacy"
-    poll_seconds: 0.5
+    ab_mode: "auto"
+    repeats: 6
+    gap_ms: 50
 monitor:
   health: true
   asq: true
   interval_s: 1.0
   recovery_attempts: 3
   recovery_backoff_s: 0.5
-
-

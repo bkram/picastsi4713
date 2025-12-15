@@ -42,6 +42,61 @@ Insert audio into your SI4713 module, then run:
 python3 run_tx.py --cfg cfg/picastsi4713.yml
 ```
 
+### Virtualenv quickstart
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.in
+```
+
+Then start with the FT232H helper (Blinka backend):
+```bash
+./start_ft232h.sh
+```
+Override defaults if needed, e.g. `RESET_PIN=6 FTDI_URL=ftdi://ftdi:232h/1 ./start_ft232h.sh`.
+
+### FT232H (USB-I²C) host
+
+If you are driving the SI4713 from a computer via an **FT232H** instead of Raspberry Pi GPIO:
+
+1) Wire FT232H D1/D2 to SCL/SDA and pick a spare GPIO line (e.g., D5) for **RESET**. Keep everything at 3.3 V and ensure pull-ups on SDA/SCL (Adafruit SI4713 boards include them).
+2) Pick a backend:
+
+- **pyftdi backend (default)**  
+  Install `pyftdi`: `pip install pyftdi`  
+  Run:  
+  ```bash
+  SI4713_BACKEND=ft232h \
+  SI4713_FT232H_URL=ftdi://ftdi:232h/1 \
+  SI4713_FT232H_RESET_PIN=5 \
+  python3 run_tx.py --cfg cfg/picastsi4713.yml
+  ```
+
+- **Blinka backend (matches Adafruit FT232H examples)**  
+  Install `adafruit-blinka` (pulls in `pyftdi`): `pip install adafruit-blinka`  
+  Set `BLINKA_FT232H=1` and run:  
+  ```bash
+  BLINKA_FT232H=1 \
+  SI4713_BACKEND=ft232h_blinka \
+  SI4713_FT232H_RESET_PIN=5 \
+  python3 run_tx.py --cfg cfg/picastsi4713.yml
+  ```
+
+You can also pass these via CLI: `--backend`, `--ftdi-url`, `--ftdi-reset-pin`.
+
+**FT232H ↔ SI4713 pin map (3.3 V only)**
+
+| FT232H pin | SI4713 pin | Notes                |
+|------------|------------|----------------------|
+| D1 (SCL)   | SCL        | I²C clock            |
+| D2 (SDA)   | SDA        | I²C data             |
+| D5 (default) | RESET    | Use `RESET_PIN` to change |
+| 3V3        | VIN/3V3    | Power (3.3 V only)   |
+| GND        | GND        | Common ground        |
+| (SEN)      | SEN        | Keep high (usually on-board) |
+| pull-ups   | SDA/SCL    | Present on Adafruit SI4713; add ~4.7 kΩ if not |
+
 ---
 
 ## ⚙️ Configuration

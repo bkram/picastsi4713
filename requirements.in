@@ -1,0 +1,10 @@
+# Core runtime
+pyyaml>=6.0
+smbus2>=0.4
+
+# USB-I2C backends
+pyftdi>=0.54            # direct FT232H backend
+adafruit-blinka>=8.0    # Blinka FT232H backend (set BLINKA_FT232H=1)
+
+# Raspberry Pi GPIO (only on Linux)
+RPi.GPIO; platform_system == "Linux"
