@@ -1,0 +1,22 @@
+# Adapter configuration example for PiCastSI4713.
+# Copy to cfg/config.yaml and adjust for your hardware.
+
+# adapter: auto | rpi | ft232h | ft232h_blinka
+adapter: auto
+
+# FT232H (only needed when adapter=ft232h/ft232h_blinka)
+ftdi_url: ftdi://ftdi:232h/1
+ftdi_reset_pin: 5
+
+# Raspberry Pi I2C
+i2c_bus: 1
+
+# Web UI
+api_host: 0.0.0.0
+api_port: 5080
+
+# Audio playback (mpv by default). {url} and {device} are substituted.
+audio_player_cmd: "mpv"
+audio_player_device_flag: "--no-video --cache=yes --cache-secs=10 --audio-device={device}"
+audio_player_url_arg: "{url}"
+audio_device: "auto"
