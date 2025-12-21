@@ -69,7 +69,7 @@ instance/
 .scrapy
 
 # Sphinx documentation
-docs/_build/
+docs/
 
 # PyBuilder
 .pybuilder/
@@ -226,3 +226,4 @@ cfg/*.json
 cfg/state.json
 cfg/config.yaml
 rt_file.txt
+deploy.sh

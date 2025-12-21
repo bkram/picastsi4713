@@ -8,401 +8,380 @@
       rel="stylesheet"
       href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css"
     />
-    <style>
-      :root {
-        --bg: #0a1024;
-        --card: #0f172a;
-        --border: #1f2937;
-        --accent: #22d3ee;
-        --muted: #94a3b8;
-      }
-      body {
-        background: var(--bg);
-        color: #e5e7eb;
-        font-size: 0.8rem;
-      }
-      main {
-        margin-top: 1rem;
-      }
-      h1,
-      h2,
-      h3,
-      h4,
-      h5 {
-        font-weight: 650;
-        letter-spacing: 0.02em;
-      }
-      .grid {
-        display: grid;
-        gap: 1rem;
-      }
-      .grid.cols-3 {
-        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-      }
-      .grid.cols-2 {
-        grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-      }
-      .panel {
-        background: var(--card);
-        border: 1px solid var(--border);
-        border-radius: 12px;
-        padding: 1rem;
-        box-shadow: 0 18px 40px rgba(0, 0, 0, 0.35);
-      }
-      .panel h2,
-      .panel h3 {
-        margin-bottom: 0.4rem;
-      }
-      .muted {
-        color: var(--muted);
-        font-size: 0.9em;
-      }
-      label {
-        color: #cbd5e1;
-      }
-      input,
-      select,
-      textarea {
-        background: #0b1222;
-        color: #e5e7eb;
-        border-color: #1f2937;
-        font-size: inherit;
-      }
-      textarea.full {
-        width: 100%;
-        min-height: 90px;
-      }
-      .status {
-        display: flex;
-        gap: 0.75rem;
-        flex-wrap: wrap;
-        align-items: center;
-      }
-      .status code {
-        background: #0b1222;
-        padding: 0.1rem 0.4rem;
-        border-radius: 4px;
-      }
-      .config-buttons {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-        gap: 0.5rem;
-      }
-      .config-buttons button {
-        width: 100%;
-        justify-content: flex-start;
-        text-transform: none;
-      }
-      .tag {
-        background: #0b1222;
-        border: 1px solid var(--border);
-        color: #e5e7eb;
-        padding: 0.2rem 0.7rem;
-        border-radius: 999px;
-        font-size: 0.8em;
-      }
-      .header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        margin-bottom: 1rem;
-      }
-      .header h1 {
-        margin: 0;
-        font-size: 1.3rem;
-      }
-      .header small {
-        color: var(--muted);
-      }
-      .pill {
-        display: inline-flex;
-        align-items: center;
-        gap: 0.35rem;
-        padding: 0.2rem 0.55rem;
-        border-radius: 999px;
-        background: #0b1222;
-        border: 1px solid var(--border);
-        font-size: 0.8em;
-      }
-      .hidden {
-        display: none;
-      }
-      .pill .dot {
-        width: 10px;
-        height: 10px;
-        border-radius: 50%;
-        background: var(--accent);
-        display: inline-block;
-      }
-    </style>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Sora:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/static/app.css" />
   </head>
   <body>
     <main class="container">
       <header class="header">
         <div>
           <h1>PiCastSI4713</h1>
-          <small class="muted">Compact FM + RDS encoder console</small>
+          <small class="muted">FM Transmitter + RDS encoder</small>
         </div>
-        <div id="currentCfg" class="tag">Current: (loading...)</div>
+        <div class="header-actions">
+          <div class="top-controls">
+            <select id="configSelectTop" aria-label="Config"></select>
+            <button id="txToggleBtn" class="contrast">On Air</button>
+            <button id="setActiveTopBtn">Set Active</button>
+          </div>
+        </div>
       </header>
 
-      <article class="panel">
-        <h2>On Air</h2>
-        <p class="muted" id="activeName">Config: —</p>
-        <div class="status">
-          <span class="pill"
-            ><span class="dot"></span>PS Now
-            <code id="statusPsCurrent">—</code></span
-          >
-          <span class="pill"
-            ><span class="dot"></span>RT <code id="statusRt">—</code></span
-          >
-          <span class="pill"
-            ><span class="dot"></span>Bank <code id="statusBank">—</code></span
-          >
-          <span class="pill"
-            ><span class="dot"></span>Updated <code id="statusTs">—</code></span
-          >
+      <article class="panel on-air">
+        <div class="on-air-header">
+          <div>
+            <h2>On Air</h2>
+          </div>
+        </div>
+        <div class="on-air-meta">
+          <div class="meta-row">
+            <span class="meta-label">FM</span>
+            <span id="statusFreqMeta" class="meta-text">—</span>
+          </div>
+          <div class="meta-row">
+            <span class="meta-label">PS</span>
+            <span id="statusPsCurrent" class="meta-text">—</span>
+          </div>
+          <div class="meta-row">
+            <span class="meta-label">RT</span>
+            <span id="statusRt" class="meta-text">—</span>
+          </div>
         </div>
       </article>
 
-      <div class="grid cols-3">
-        <article class="panel">
-          <h2>Config Actions</h2>
+      <div class="nav-tabs">
+        <button class="active" data-screen-btn="tx">RF</button>
+        <button data-screen-btn="stream">Streaming</button>
+        <button data-screen-btn="rds">RDS Flags</button>
+        <button data-screen-btn="ps">Program Service</button>
+        <button data-screen-btn="rt">Radiotext</button>
+        <button data-screen-btn="console">Console</button>
+      </div>
+
+      <div class="screens">
+        <section class="screen active" data-screen="tx">
           <div class="grid cols-2">
-            <button id="reloadBtn">Reload</button>
-            <button id="saveBtn">Save</button>
-            <button id="setActiveBtn" class="contrast">Set Active</button>
-          </div>
-          <p class="muted" style="margin-top: 0.5rem">
-            Reload = discard unsaved form edits and pull from file.
-          </p>
-        </article>
+            <article class="panel">
+              <h3>Transmission</h3>
+              <label
+                >Frequency (MHz) (76-108 MHz)
+                <input
+                  id="rf_frequency_khz"
+                  type="number"
+                  min="76"
+                  max="108"
+                  step="0.1"
+                />
+                <div id="rf_frequency_msg" class="error-msg hidden"></div>
+              </label>
+              <label
+              >Power (dBµV, 88-120 , 110dBµV official max)
+                <input id="rf_power" type="number" min="88" max="120" />
+              </label>
+              <label
+                >Antenna Cap control
+                <select id="rf_antenna_cap_mode">
+                  <option value="manual">Manual</option>
+                  <option value="auto">Auto</option>
+                </select>
+              </label>
+              <label id="rf_antenna_cap_wrap"
+                >Antenna Cap
+                <input id="rf_antenna_cap" type="number" min="0" max="255" />
+              </label>
+              <label
+                >Deviation control
+                <select id="rf_manual_dev">
+                  <option value="manual">Manual</option>
+                  <option value="auto">Auto</option>
+                </select>
+              </label>
+              <div id="rf_dev_fields">
+                <label
+                  >Audio Deviation (Hz)
+                  <input id="rf_audio_dev_hz" type="number" min="0" />
+                </label>
+                <label
+                  >Audio Deviation w/o RDS (Hz)
+                  <input id="rf_audio_dev_no_rds_hz" type="number" min="0" />
+                </label>
+              </div>
+              <label
+                >Pre-emphasis
+                <select id="rf_preemphasis">
+                  <option value="us50">EU (50 µs)</option>
+                  <option value="us75">US (75 µs)</option>
+                  <option value="none">None</option>
+                </select>
+              </label>
+            </article>
 
-        <article class="panel">
-          <h2>Import</h2>
-          <p class="muted">
-            Drop in a JSON config; it will be added to <code>cfg/</code>.
-          </p>
-          <input type="file" id="importFile" accept=".json" />
-          <button id="importBtn">Import</button>
-        </article>
+            <article class="panel">
+              <h3>Monitoring & Recovery</h3>
+              <div class="grid cols-3">
+                <label
+                  ><input id="monitor_health" type="checkbox" checked /> Monitor
+                  Health</label
+                >
+                <label
+                  ><input id="monitor_asq" type="checkbox" /> Monitor ASQ</label
+                >
+                <label
+                  >Ignore OVERMOD below (dBFS)
+                  <input
+                    id="overmod_ignore_below_dbfs"
+                    type="number"
+                    step="0.1"
+                    placeholder="-5"
+                  />
+                </label>
+                <label
+                  >Health Interval (s)
+                  <input
+                    id="health_interval_s"
+                    type="number"
+                    step="0.1"
+                    min="0.5"
+                  />
+                </label>
+                <label
+                  >Recovery Attempts
+                  <input id="recovery_attempts" type="number" min="0" max="10" />
+                </label>
+                <label
+                  >Recovery Backoff (s)
+                  <input
+                    id="recovery_backoff_s"
+                    type="number"
+                    step="0.5"
+                    min="0"
+                  />
+                </label>
+              </div>
+            </article>
+          </div>
+        </section>
+
+        <section class="screen" data-screen="stream">
+          <article class="panel">
+            <h3>Streaming</h3>
+            <label
+              ><input id="rf_audio_enabled" type="checkbox" /> Enable audio
+              stream</label
+            >
+            <label
+              >Stream URL
+              <input id="rf_audio_url" type="text" />
+            </label>
+          </article>
+        </section>
+
+        <section class="screen" data-screen="rds">
+          <article class="panel">
+            <h3>RDS Flags</h3>
+            <label
+              ><input id="rds_enabled" type="checkbox" checked /> Enable
+              RDS</label
+            >
+            <label
+              ><input id="uecp_enabled" type="checkbox" /> UECP Mode (external
+              RDS)</label
+            >
+            <div class="grid cols-2">
+              <label
+                >UECP Host
+                <input id="uecp_host" type="text" placeholder="0.0.0.0"
+              /></label>
+              <label
+                >UECP Port
+                <input
+                  id="uecp_port"
+                  type="number"
+                  min="1"
+                  max="65535"
+                  placeholder="9100"
+              /></label>
+            </div>
+            <p class="muted">
+              UECP mode ignores internal PS/RT and flag updates. Experimental.
+            </p>
+            <label
+              >PI (hex)
+              <input id="rds_pi" type="text" pattern="[0-9A-Fa-f]{1,4}" />
+              <div id="rds_pi_msg" class="error-msg hidden"></div>
+            </label>
+            <label
+              >PTY
+              <select id="rds_pty">
+                <option value="0">0 - None</option>
+                <option value="1">1 - News</option>
+                <option value="2">2 - Current Affairs</option>
+                <option value="3">3 - Information</option>
+                <option value="4">4 - Sport</option>
+                <option value="5">5 - Education</option>
+                <option value="6">6 - Drama</option>
+                <option value="7">7 - Culture</option>
+                <option value="8">8 - Science</option>
+                <option value="9">9 - Varied</option>
+                <option value="10">10 - Pop Music</option>
+                <option value="11">11 - Rock Music</option>
+                <option value="12">12 - Easy Listening</option>
+                <option value="13">13 - Light Classics M</option>
+                <option value="14">14 - Serious Classics</option>
+                <option value="15">15 - Other Music</option>
+                <option value="16">16 - Weather</option>
+                <option value="17">17 - Finance</option>
+                <option value="18">18 - Children's</option>
+                <option value="19">19 - Social Affairs</option>
+                <option value="20">20 - Religion</option>
+                <option value="21">21 - Phone In</option>
+                <option value="22">22 - Travel</option>
+                <option value="23">23 - Leisure</option>
+                <option value="24">24 - Jazz Music</option>
+                <option value="25">25 - Country Music</option>
+                <option value="26">26 - National Music</option>
+                <option value="27">27 - Oldies Music</option>
+                <option value="28">28 - Folk Music</option>
+                <option value="29">29 - Documentary</option>
+                <option value="30">30 - Alarm Test</option>
+                <option value="31">31 - Alarm</option>
+              </select>
+            </label>
+            <label
+              >Deviation (10 Hz)
+              <input id="rds_dev_hz" type="number" min="0" max="2000" />
+            </label>
+            <div class="grid cols-3">
+              <label><input id="rds_tp" type="checkbox" /> TP</label>
+              <label><input id="rds_ta" type="checkbox" /> TA</label>
+              <label><input id="rds_ms_music" type="checkbox" /> MS Music</label>
+              <label><input id="di_stereo" type="checkbox" /> DI Stereo</label>
+              <label
+                ><input id="di_artificial_head" type="checkbox" /> DI Artificial
+                Head</label
+              >
+              <label
+                ><input id="di_compressed" type="checkbox" /> DI Compressed</label
+              >
+              <label
+                ><input id="di_dynamic_pty" type="checkbox" /> DI Dynamic
+                PTY</label
+              >
+            </div>
+          </article>
+        </section>
+
+        <section class="screen" data-screen="ps">
+          <article class="panel">
+            <h3>Program Service (PS)</h3>
+            <label
+              >PS Interval (s)
+              <input id="rds_ps_speed" type="number" min="1" max="40" step="0.1"
+            /></label>
+            <p class="muted">
+              Macros: {time} {date} {datetime} {config} {freq} {power}
+            </p>
+            <label
+              ><input id="rds_ps_center" type="checkbox" checked /> Center
+              PS</label
+            >
+            <label
+              >PS Texts (pipe separated |)<br />
+              <textarea
+                id="rds_ps"
+                class="full"
+                placeholder="Text1 | Text2"
+              ></textarea>
+            </label>
+          </article>
+        </section>
+
+        <section class="screen" data-screen="rt">
+          <article class="panel">
+            <h3>Radiotext (RT)</h3>
+            <p class="muted">If an RT file is set, it overrides the list below.</p>
+            <p class="muted">
+              Macros: {time} {date} {datetime} {config} {freq} {power}
+            </p>
+            <label
+              >RT Texts (pipe separated |)<br />
+              <textarea
+                id="rds_rt_texts"
+                class="full"
+                placeholder="Line1 | Line2"
+              ></textarea>
+            </label>
+            <label
+              >Interval (s)
+              <input id="rds_rt_speed_s" type="number" step="0.1" min="0.1" />
+            </label>
+            <label
+              ><input id="rds_rt_center" type="checkbox" checked />
+              CR-terminate RT (pads via carriage return)</label
+            >
+            <label
+              >Skip Words (comma) <input id="rds_rt_skip_words" type="text"
+            /></label>
+            <label>RT File Path <input id="rds_rt_file" type="text" /></label>
+            <label
+              >AB Mode
+              <select id="rds_rt_ab_mode">
+                <option value="legacy">legacy</option>
+                <option value="auto">auto</option>
+                <option value="bank">bank</option>
+              </select>
+            </label>
+            <p class="muted">
+              AB Mode auto toggles the A/B flag. Use “bank” only if you want to
+              force RT Bank manually.
+            </p>
+            <div class="grid cols-3">
+              <label
+                >RT Repeats
+                <input id="rds_rt_repeats" type="number" min="1" max="10" />
+              </label>
+              <label
+                >RT Interval (s)
+                <input id="rds_rt_gap_ms" type="number" min="0" max="0.5" step="0.01" />
+              </label>
+              <label
+                >RT Bank (0/1)
+                <input id="rds_rt_bank" type="number" min="0" max="1" />
+              </label>
+            </div>
+            <p class="muted">
+              RT Repeats = times each message is sent. RT Interval = pause between
+              repeats.
+            </p>
+          </article>
+        </section>
+
+        <section class="screen" data-screen="console">
+          <article class="panel">
+            <h3>Console</h3>
+            <div class="console-toolbar">
+              <div class="controls">
+                <div class="status">
+                  <span id="consoleDot" class="dot"></span>
+                </div>
+                <button id="consolePauseBtn">Pause</button>
+                <button id="consoleClearBtn">Clear</button>
+                <span class="spacer"></span>
+                <input id="consoleFilter" type="text" placeholder="Filter" />
+                <label class="muted"
+                  ><input id="consoleFollow" type="checkbox" checked /> Live</label
+                >
+              </div>
+            </div>
+            <div id="consoleOutput" class="console-output" aria-live="polite"></div>
+          </article>
+        </section>
       </div>
-
-      <article class="panel">
-        <h2>Configurations</h2>
-        <p class="muted">Select a profile to load or activate.</p>
-        <div id="configList" class="config-buttons"></div>
-      </article>
-
-      <div class="grid cols-2">
-        <article class="panel">
-          <h3>Transmission</h3>
-          <label
-            >Frequency (kHz)
-            <input
-              id="rf_frequency_khz"
-              type="number"
-              min="76000"
-              max="108000"
-            />
-          </label>
-          <label
-            >Power (dBµV, 88-120)
-            <input id="rf_power" type="number" min="88" max="120" />
-          </label>
-          <label
-            >Antenna Cap control
-            <select id="rf_antenna_cap_mode">
-              <option value="manual">Manual</option>
-              <option value="auto">Auto</option>
-            </select>
-          </label>
-          <label id="rf_antenna_cap_wrap"
-            >Antenna Cap
-            <input id="rf_antenna_cap" type="number" min="0" max="255" />
-          </label>
-          <label
-            >Deviation control
-            <select id="rf_manual_dev">
-              <option value="manual">Manual</option>
-              <option value="auto">Auto</option>
-            </select>
-          </label>
-          <div id="rf_dev_fields">
-            <label
-              >Audio Deviation (Hz)
-              <input id="rf_audio_dev_hz" type="number" min="0" />
-            </label>
-            <label
-              >Audio Deviation w/o RDS (Hz)
-              <input id="rf_audio_dev_no_rds_hz" type="number" min="0" />
-            </label>
-          </div>
-          <label
-            >Pre-emphasis
-            <select id="rf_preemphasis">
-              <option value="us50">EU (50 µs)</option>
-              <option value="us75">US (75 µs)</option>
-              <option value="none">None</option>
-            </select>
-          </label>
-        </article>
-
-        <article class="panel">
-          <h3>Monitoring & Recovery</h3>
-          <div class="grid cols-3">
-            <label
-              ><input id="monitor_health" type="checkbox" checked /> Monitor
-              Health</label
-            >
-            <label
-              ><input id="monitor_asq" type="checkbox" /> Monitor ASQ</label
-            >
-            <label
-              >Ignore OVERMOD below (dBFS)
-              <input
-                id="overmod_ignore_below_dbfs"
-                type="number"
-                step="0.1"
-                placeholder="-5"
-              />
-            </label>
-            <label
-              >Health Interval (s)
-              <input
-                id="health_interval_s"
-                type="number"
-                step="0.1"
-                min="0.5"
-              />
-            </label>
-            <label
-              >Recovery Attempts
-              <input id="recovery_attempts" type="number" min="0" max="10" />
-            </label>
-            <label
-              >Recovery Backoff (s)
-              <input id="recovery_backoff_s" type="number" step="0.5" min="0" />
-            </label>
-          </div>
-        </article>
-      </div>
-
-      <article class="panel">
-        <h3>Streaming</h3>
-        <label
-          ><input id="rf_audio_enabled" type="checkbox" /> Enable audio
-          stream</label
-        >
-        <label
-          >Stream URL
-          <input id="rf_audio_url" type="text" />
-        </label>
-      </article>
-
-      <div class="grid cols-2">
-        <article class="panel">
-          <h3>RDS Flags</h3>
-          <label
-            ><input id="rds_enabled" type="checkbox" checked /> Enable
-            RDS</label
-          >
-          <label
-            >PI (hex) <input id="rds_pi" type="text" pattern="[0-9A-Fa-f]{1,4}"
-          /></label>
-          <label
-            >PTY <input id="rds_pty" type="number" min="0" max="31"
-          /></label>
-          <label
-            >Deviation (10 Hz)
-            <input id="rds_dev_hz" type="number" min="0" max="2000" />
-          </label>
-          <div class="grid cols-3">
-            <label><input id="rds_tp" type="checkbox" /> TP</label>
-            <label><input id="rds_ta" type="checkbox" /> TA</label>
-            <label><input id="rds_ms_music" type="checkbox" /> MS Music</label>
-            <label><input id="di_stereo" type="checkbox" /> DI Stereo</label>
-            <label
-              ><input id="di_artificial_head" type="checkbox" /> DI Artificial
-              Head</label
-            >
-            <label
-              ><input id="di_compressed" type="checkbox" /> DI Compressed</label
-            >
-            <label
-              ><input id="di_dynamic_pty" type="checkbox" /> DI Dynamic
-              PTY</label
-            >
-          </div>
-        </article>
-
-        <article class="panel">
-          <h3>Program Service (PS)</h3>
-          <label
-            >PS Speed <input id="rds_ps_speed" type="number" min="1" max="40"
-          /></label>
-          <label
-            ><input id="rds_ps_center" type="checkbox" checked /> Center
-            PS</label
-          >
-          <label
-            >PS Texts (pipe separated |)<br />
-            <textarea
-              id="rds_ps"
-              class="full"
-              placeholder="Text1 | Text2"
-            ></textarea>
-          </label>
-        </article>
-      </div>
-
-      <article class="panel">
-        <h3>Radiotext (RT)</h3>
-        <p class="muted">If an RT file is set, it overrides the list below.</p>
-        <label
-          >RT Texts (pipe separated |)<br />
-          <textarea
-            id="rds_rt_texts"
-            class="full"
-            placeholder="Line1 | Line2"
-          ></textarea>
-        </label>
-        <label
-          >Speed (s)
-          <input id="rds_rt_speed_s" type="number" step="0.1" min="0.1" />
-        </label>
-        <label
-          ><input id="rds_rt_center" type="checkbox" checked /> CR-terminate RT
-          (pads via carriage return)</label
-        >
-        <label
-          >Skip Words (comma) <input id="rds_rt_skip_words" type="text"
-        /></label>
-        <label>RT File Path <input id="rds_rt_file" type="text" /></label>
-        <label
-          >AB Mode
-          <select id="rds_rt_ab_mode">
-            <option value="legacy">legacy</option>
-            <option value="auto">auto</option>
-            <option value="bank">bank</option>
-          </select>
-        </label>
-        <div class="grid cols-3">
-          <label
-            >RT Repeats
-            <input id="rds_rt_repeats" type="number" min="1" max="10" />
-          </label>
-          <label
-            >RT Gap (ms)
-            <input id="rds_rt_gap_ms" type="number" min="0" max="500" />
-          </label>
-          <label
-            >RT Bank (0/1)
-            <input id="rds_rt_bank" type="number" min="0" max="1" />
-          </label>
-        </div>
-      </article>
     </main>
     <script src="/static/app.js"></script>
   </body>

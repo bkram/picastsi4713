@@ -17,6 +17,6 @@ api_port: 5080
 
 # Audio playback (mpv by default). {url} and {device} are substituted.
 audio_player_cmd: "mpv"
-audio_player_device_flag: "--no-video --cache=yes --cache-secs=10 --audio-device={device}"
+audio_player_device_flag: "--no-video --cache=yes --cache-secs=5 --audio-device={device}"
 audio_player_url_arg: "{url}"
 audio_device: "auto"

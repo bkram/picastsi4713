@@ -7,6 +7,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VENV_DIR="${SCRIPT_DIR}/.venv"
 : "${ADAPTER_CFG:=${SCRIPT_DIR}/cfg/config.yaml}"
 # Allow overriding the station config via CFG=/path/to/config.json
+# You can pass --start to force TX on at launch.
 : "${CFG:=}"
 
 if [[ ! -d "$VENV_DIR" ]]; then
@@ -19,4 +20,5 @@ source "${VENV_DIR}/bin/activate"
 exec python3 "${SCRIPT_DIR}/picast4713.py" \
   --adapter-config "$ADAPTER_CFG" \
   ${CFG:+--cfg "$CFG"} \
+  "$@" \
   --api-port 0

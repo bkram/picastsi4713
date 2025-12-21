@@ -267,6 +267,7 @@ class SI4713:
         backend = (backend or "auto").lower()
         self.addr: int = i2c_addr
         self.backend: str = backend
+        self._stop_event: Optional[threading.Event] = None
 
         self._ftdi_backend: Optional[_Ft232hBackend] = None
         self._blinka_backend: Optional[_BlinkaBackend] = None
@@ -336,12 +337,29 @@ class SI4713:
         self.acomp: int = 0
         self.misc: int = 0
 
+        self._prop_cache: dict[int, int] = {}
+        self._last_freq_10khz: Optional[int] = None
+        self._last_output: Optional[Tuple[int, int]] = None
+        self._last_ps: dict[int, str] = {}
         self._rt_ab_mode: str = "auto"  # 'legacy' | 'auto' | 'bank'
         self._rt_ab: int = 1  # 0=A, 1=B
         self._last_rt: Optional[bytes] = None  # last 32-byte payload
+        self._last_rt_bank: Optional[int] = None
+
+    def set_stop_event(self, event: Optional[threading.Event]) -> None:
+        self._stop_event = event
+
+    def _should_stop(self) -> bool:
+        return bool(self._stop_event and self._stop_event.is_set())
 
     def init(self, rst_pin: int, refclk_hz: int) -> bool:
         try:
+            self._prop_cache.clear()
+            self._last_freq_10khz = None
+            self._last_output = None
+            self._last_ps.clear()
+            self._last_rt = None
+            self._last_rt_bank = None
             # --- Safety: ensure the lock exists even if something odd happened
             if "lock" not in self.__dict__ or self.lock is None:
                 import threading
@@ -389,6 +407,8 @@ class SI4713:
     def _write_buf(self, nbytes: int) -> bool:
         retries = 3
         for attempt in range(1, retries + 1):
+            if self._should_stop():
+                return False
             try:
                 with self.lock:
                     self.bus.write_i2c_block_data(
@@ -396,6 +416,8 @@ class SI4713:
                     )
                     time.sleep(0.06)
                     for _ in range(50):
+                        if self._should_stop():
+                            return False
                         status = self.bus.read_byte(self.addr)
                         if status & 0x80:
                             return True
@@ -403,6 +425,8 @@ class SI4713:
                     logger.error("CTS timeout after write")
                     return False
             except Exception as exc:  # noqa: BLE001
+                if self._should_stop():
+                    return False
                 logger.error(
                     "I2C write error (attempt %d/%d): %s", attempt, retries, exc
                 )
@@ -410,13 +434,19 @@ class SI4713:
         return False
 
     def _set_prop(self, prop: int, val: int) -> bool:
+        cached = self._prop_cache.get(prop)
+        if cached is not None and cached == val:
+            return True
         self.buf[0] = 0x12
         self.buf[1] = 0x00
         self.buf[2] = (prop >> 8) & 0xFF
         self.buf[3] = prop & 0xFF
         self.buf[4] = (val >> 8) & 0xFF
         self.buf[5] = val & 0xFF
-        return self._write_buf(6)
+        ok = self._write_buf(6)
+        if ok:
+            self._prop_cache[prop] = val
+        return ok
 
     # ---------- Public control API ----------
 
@@ -430,27 +460,44 @@ class SI4713:
         finally:
             # >>> NEW: clear RT state so first new RT is guaranteed to be a "new message"
             self._last_rt = None
+            self._last_rt_bank = None
+            self._prop_cache.clear()
+            self._last_freq_10khz = None
+            self._last_output = None
+            self._last_ps.clear()
 
     def set_frequency_10khz(self, f10k: int) -> None:
+        if self._last_freq_10khz == f10k:
+            return
         self.buf[0] = 0x30
         self.buf[1] = 0x00
         self.buf[2] = (f10k >> 8) & 0xFF
         self.buf[3] = f10k & 0xFF
         if not self._write_buf(4):
+            if self._should_stop():
+                return
             time.sleep(0.01)
-            self._write_buf(4)
+            if not self._write_buf(4):
+                return
+        self._last_freq_10khz = f10k
 
     def set_output(self, level: int, cap: int) -> None:
         level = max(0, min(255, level))
         cap = max(0, min(255, cap))
+        if self._last_output == (level, cap):
+            return
         self.buf[0] = 0x31
         self.buf[1] = 0x00
         self.buf[2] = 0x00
         self.buf[3] = level
         self.buf[4] = cap
         if not self._write_buf(5):
+            if self._should_stop():
+                return
             time.sleep(0.01)
-            self._write_buf(5)
+            if not self._write_buf(5):
+                return
+        self._last_output = (level, cap)
 
     def enable_mpx(self, on: bool) -> None:
         if on:
@@ -568,6 +615,9 @@ class SI4713:
             self._set_prop(0x2C06, 0xDD95 + af_code)
 
     def rds_set_ps(self, text: str, slot: int) -> None:
+        prev = self._last_ps.get(slot)
+        if prev == text:
+            return
         arr = [" "] * 8
         for i in range(min(8, len(text))):
             arr[i] = text[i]
@@ -582,6 +632,7 @@ class SI4713:
         self.buf[1] = group + 1
         self.buf[2:6] = list(map(ord, arr[4:8]))
         self._write_buf(6)
+        self._last_ps[slot] = text
 
     def rds_set_pscount(self, count: int, speed: int) -> None:
         self._set_prop(0x2C05, count)
@@ -643,6 +694,13 @@ class SI4713:
                 self._rt_ab ^= 1
             bank_to_send = self._rt_ab & 1
 
+        if (
+            not force_new_message
+            and self._last_rt == payload
+            and self._last_rt_bank == bank_to_send
+        ):
+            return bank_to_send
+
         # ---- Prepare fields used in Block B (type 2A, version A)
         tp = (self.misc >> 10) & 0x01
         pty = (self.misc >> 5) & 0x1F
@@ -674,12 +732,15 @@ class SI4713:
             idx += 4
 
         self._last_rt = payload
+        self._last_rt_bank = bank_to_send
         return bank_to_send
 
     # ---------- Status / health ----------
 
     def tx_status(self) -> Optional[Tuple[int, int, bool, int]]:
         try:
+            if self._should_stop():
+                return None
             self.buf[0] = 0x33
             self.buf[1] = 0x00
             if not self._write_buf(2):
@@ -711,16 +772,20 @@ class SI4713:
 
     def read_asq(self) -> Tuple[bool, int]:
         try:
+            if self._should_stop():
+                return False, 0
             self.buf[0] = 0x34
             self.buf[1] = 0x00
-            self._write_buf(2)
+            if not self._write_buf(2):
+                return False, 0
             with self.lock:
                 resp = self.bus.read_i2c_block_data(self.addr, 0, 5)
             overmod = bool(resp[1] & 0x04)
             inlevel = resp[4] if resp[4] < 128 else resp[4] - 256
             self.buf[0] = 0x34
             self.buf[1] = 0x01
-            self._write_buf(2)
+            if not self._write_buf(2):
+                return overmod, inlevel
             return overmod, inlevel
         except Exception as exc:  # noqa: BLE001
             logger.error("ASQ read error: %s", exc)
@@ -728,8 +793,11 @@ class SI4713:
 
     def read_revision(self) -> Tuple[int, int]:
         try:
+            if self._should_stop():
+                return 0, 0
             self.buf[0] = 0x10
-            self._write_buf(1)
+            if not self._write_buf(1):
+                return 0, 0
             with self.lock:
                 resp = self.bus.read_i2c_block_data(self.addr, 0, 9)
             return resp[1], resp[8]
