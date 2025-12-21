@@ -162,8 +162,8 @@ live console log stream.
 
 | Platform | SDA | SCL | RESET | Notes |
 | --- | --- | --- | --- | --- |
-| Raspberry Pi (I2C bus 1) | GPIO 2 | GPIO 3 | GPIO 5 (default) | 3.3V only, common ground |
-| FT232H (USB-I2C) | D1 | D0 | D5 (default) | 3.3V only, common ground; set `adapter: ft232h` or `adapter: ft232h_blinka` |
+| Raspberry Pi (I2C bus 1) | GPIO 2 | GPIO 3 | GPIO 5 (default) | 3.3V I/O; Adafruit breakout can be powered from 3.3V or 5V; common ground |
+| FT232H (USB-I2C) | D1 | D0 | D5 (default) | 3.3V I/O; Adafruit breakout can be powered from 3.3V or 5V; common ground; set `adapter: ft232h` or `adapter: ft232h_blinka` |
 
 RESET is configurable via `SI4713_RESET_PIN` (RPi) or `ftdi_reset_pin` (FT232H).
 
