@@ -152,24 +152,20 @@ as `api_host` and `api_port`. The UI auto-saves edits (debounced), can apply the
 active config without restarting audio, includes an On Air toggle, and shows a
 live console log stream.
 
-## Hardware notes
-
 ## Supported platforms
 
 - Raspberry Pi (I2C via smbus2): supported.
 - FT232H (USB-I2C via pyftdi or Blinka) on Linux/macOS: supported.
 - FT232H on Windows: experimental (requires WinUSB/libusb driver setup).
 
-Raspberry Pi (I2C bus 1):
-- SDA: GPIO 2
-- SCL: GPIO 3
-- RESET: GPIO 5 by default (configurable with `SI4713_RESET_PIN`)
-- 3.3V only, common ground
+## Hardware notes
 
-FT232H (USB-I2C):
-- SCL: D0, SDA: D1, RESET: D5 by default (configurable)
-- 3.3V only, common ground
-- Use `adapter: ft232h` or `adapter: ft232h_blinka` in `cfg/config.yaml`
+| Platform | SDA | SCL | RESET | Notes |
+| --- | --- | --- | --- | --- |
+| Raspberry Pi (I2C bus 1) | GPIO 2 | GPIO 3 | GPIO 5 (default) | 3.3V only, common ground |
+| FT232H (USB-I2C) | D1 | D0 | D5 (default) | 3.3V only, common ground; set `adapter: ft232h` or `adapter: ft232h_blinka` |
+
+RESET is configurable via `SI4713_RESET_PIN` (RPi) or `ftdi_reset_pin` (FT232H).
 
 ## License
 
