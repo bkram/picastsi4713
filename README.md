@@ -10,7 +10,7 @@ external RDS input.
 - 🎵 RDS: PI/PTY/TP/TA/MS/DI, PS rotation, RT rotation, RT file override, single AF
 - 🌐 UECP input (TCP/UDP) for external RDS sources
 - 🔄 Hot reload: apply config diffs without restarting
-- 🛡️ Health monitoring with recovery attempts and ASQ logging
+- 🛡️ Health monitoring with recovery attempts and ASQ logging (while TX is on)
 - 🎧 Optional audio stream playback per station config
 
 ## Requirements
@@ -129,7 +129,7 @@ mpv --audio-device=help
 ## UECP mode (external RDS, experimental)
 
 UECP mode is experimental. It accepts binary UECP frames over TCP or UDP and applies only the fields
-the SI4713 supports: PI, PTY, TP, TA, MS, DI, PS, RT. Internal RDS updates are
+the SI4713 supports: PI, PTY, TP, TA, MS, DI, PS, RT, and a single AF. Internal RDS updates are
 ignored while UECP is enabled. The SI4713 only supports 32 chars of RT; UECP RT
 payloads are truncated to 32.
 
