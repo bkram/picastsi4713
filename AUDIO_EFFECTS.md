@@ -1,5 +1,21 @@
 # Audio Effects Chain Setup Guide
 
+## Overmodulation Fix
+
+**Problem**: Input levels peaking at -1 to -3 dBFS causing `OVERMOD!!!` warnings.
+
+**Solution**: Reduce mpv output volume in `cfg/config.yaml`:
+
+```yaml
+audio_player_cmd: mpv --volume=50  # 50% volume to prevent overmod
+```
+
+**Result**: ASQ levels now stable at -21 to -27 dBFS with no overmod warnings.
+
+**Note**: You may need to adjust the volume value (30-70) depending on your audio source level.
+
+---
+
 ## Overview
 
 This document describes how to configure audio effects (compressor/limiter) for the PiCast SI4713 FM transmitter project.
