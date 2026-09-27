@@ -1,5 +1,32 @@
 # Audio Effects Chain Setup Guide
 
+## ALSA Volume Persistence
+
+**Problem**: ALSA mixer volume resets on boot.
+
+**Solution**: Set hardware PCM volume and save state:
+
+```bash
+# Set volume to 75% (adjust as needed)
+amixer -c sndrpihifiberry sset PCM 75%
+
+# Save state (restored on boot via alsa-restore.service)
+sudo alsactl store
+```
+
+**Verify**:
+```bash
+amixer -c sndrpihifiberry sget PCM  # Should show 75%
+systemctl is-enabled alsa-restore.service  # Should show "static" or "enabled"
+```
+
+**Current setup**:
+- Hardware PCM mixer: **75%** (persisted)
+- softvol max_dB cap: **-6dB** (safety limit)
+- Result: Loud audio at boot, occasional -4 dBFS peaks acceptable
+
+---
+
 ## Overmodulation Fix
 
 **Problem**: Input levels peaking at -1 to -3 dBFS causing `OVERMOD!!!` warnings.
