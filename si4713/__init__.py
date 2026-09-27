@@ -386,19 +386,6 @@ class SI4713:
             with self.lock:
                 self.bus.write_i2c_block_data(self.addr, 0x01, [0x12, 0x50])
 
-            # Wait for CTS after POWER_UP before sending further commands
-            # (datasheet: can take up to 500 ms with crystal startup).
-            with self.lock:
-                for _ in range(100):
-                    if self._should_stop():
-                        return False
-                    if self.bus.read_byte(self.addr) & 0x80:
-                        break
-                    time.sleep(0.005)
-                else:
-                    logger.error("No CTS after POWER_UP")
-                    return False
-
             if not self._write_buf([0x80, 0x0E]):
                 logger.error("GPO_CTL write failed")
                 return False
