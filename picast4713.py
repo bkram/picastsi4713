@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""
-SI4713 FM+RDS transmitter
+"""SI4713 FM+RDS transmitter.
 
 Usage:
     python3 picast4713.py --cfg station.json
@@ -13,29 +12,30 @@ import json
 import logging
 import os
 import re
-import signal
 import shlex
+import signal
+import socket
 import subprocess
 import sys
 import threading
 import time
-import socket
+from contextlib import suppress
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from si4713 import SI4713
 from si4713.charset import decode as _rds_decode
 
 if TYPE_CHECKING:
-    from web import LogBus, StatusBus
+    from web import StatusBus
 
 # ---------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------
 
 
-def _resolve_log_level(value: Optional[str]) -> int:
+def _resolve_log_level(value: str | None) -> int:
     """Resolve log level from string or numeric value."""
     if not value:
         return logging.INFO
@@ -94,7 +94,7 @@ def _parse_bool(value: Any, default: bool) -> bool:
     return default
 
 
-def _parse_float(value: Any, default: Optional[float] = None) -> Optional[float]:
+def _parse_float(value: Any, default: float | None = None) -> float | None:
     """Parse a float or return a default when conversion fails."""
     try:
         return float(value)
@@ -102,7 +102,7 @@ def _parse_float(value: Any, default: Optional[float] = None) -> Optional[float]
         return default
 
 
-def _parse_antenna_cap(value: Any, default: int = 4) -> Tuple[int, bool]:
+def _parse_antenna_cap(value: Any, default: int = 4) -> tuple[int, bool]:
     """Return (cap_value, is_auto). Value of 0 or 'auto'/None => auto-tune."""
     if value is None:
         return 0, True
@@ -118,14 +118,14 @@ def _parse_str(value: Any, default: str = "") -> str:
     return str(value) if isinstance(value, (str, int, float)) else default
 
 
-def _list_of_str(v: Any) -> List[str]:
+def _list_of_str(v: Any) -> list[str]:
     """Return a list of stringified items or an empty list."""
     if not isinstance(v, list):
         return []
     return [str(x) for x in v]
 
 
-def _get_mtime(path: Optional[str]) -> Optional[float]:
+def _get_mtime(path: str | None) -> float | None:
     """Get mtime for path, returning None for missing or invalid paths."""
     if not path:
         return None
@@ -137,10 +137,10 @@ def _get_mtime(path: Optional[str]) -> Optional[float]:
         return None
 
 
-def _read_text_file(path: str, max_bytes: int = 8192) -> Optional[str]:
+def _read_text_file(path: str, max_bytes: int = 8192) -> str | None:
     """Read a text file with newline normalization and a size cap."""
     try:
-        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+        with open(path, encoding="utf-8", errors="replace") as fh:
             data = fh.read(max_bytes)
         return data.replace("\r\n", "\n").replace("\r", "\n").strip("\n")
     except Exception as exc:  # noqa: BLE001
@@ -171,17 +171,15 @@ def _normalize_rt_source(raw: str) -> str:
     return " ".join(line.split())
 
 
-_MACRO_PATTERN = re.compile(
-    r"{(time|date|datetime|config|freq|power)}", re.IGNORECASE
-)
+_MACRO_PATTERN = re.compile(r"{(time|date|datetime|config|freq|power)}", re.IGNORECASE)
 
 
 def _macro_context(
     config_name: str,
-    now: Optional[float] = None,
-    freq_khz: Optional[int] = None,
-    power: Optional[int] = None,
-) -> Dict[str, str]:
+    now: float | None = None,
+    freq_khz: int | None = None,
+    power: int | None = None,
+) -> dict[str, str]:
     """Build macro context values for PS/RT substitution."""
     ts = time.localtime(now or time.time())
     base = os.path.splitext(os.path.basename(config_name or ""))[0]
@@ -201,7 +199,7 @@ def _macro_context(
     }
 
 
-def _apply_macros(text: str, ctx: Dict[str, str]) -> str:
+def _apply_macros(text: str, ctx: dict[str, str]) -> str:
     """Apply macro replacements in a text string."""
     if not text:
         return ""
@@ -219,11 +217,11 @@ def _has_macros(text: str) -> bool:
 
 
 def _render_ps_slots(
-    ps: List[str], center: bool, macro_ctx: Dict[str, str]
-) -> Tuple[List[Tuple[str, int]], List[str]]:
+    ps: list[str], center: bool, macro_ctx: dict[str, str]
+) -> tuple[list[tuple[str, int]], list[str]]:
     """Render PS slots and their indices with macros and centering."""
-    slots: List[Tuple[str, int]] = []
-    rendered: List[str] = []
+    slots: list[tuple[str, int]] = []
+    rendered: list[str] = []
     for idx, item in enumerate(ps):
         txt = _apply_macros(item or "", macro_ctx)
         text8 = _center_fixed(txt, 8) if center else txt[:8].ljust(8)
@@ -232,7 +230,7 @@ def _render_ps_slots(
     return slots, rendered
 
 
-def _rt_macros_possible(cfg: "AppConfig") -> bool:
+def _rt_macros_possible(cfg: AppConfig) -> bool:
     """Return True if RT sources might contain macros."""
     if _has_macros(cfg.rds_rt_text):
         return True
@@ -241,7 +239,7 @@ def _rt_macros_possible(cfg: "AppConfig") -> bool:
     return bool(cfg.rds_rt_file)
 
 
-_EMPTY_MACRO_CTX: Dict[str, str] = {}
+_EMPTY_MACRO_CTX: dict[str, str] = {}
 
 
 @dataclass
@@ -249,12 +247,12 @@ class MacroContextCache:
     """Cache macro context values, refreshing at most once per second."""
 
     config_name: str
-    freq_khz: Optional[int] = None
-    power: Optional[int] = None
+    freq_khz: int | None = None
+    power: int | None = None
     _last_epoch: int = 0
-    _last_ctx: Dict[str, str] = field(default_factory=dict)
+    _last_ctx: dict[str, str] = field(default_factory=dict)
 
-    def set_config(self, name: str, freq_khz: Optional[int], power: Optional[int]) -> None:
+    def set_config(self, name: str, freq_khz: int | None, power: int | None) -> None:
         """Update config name/frequency and reset cached values."""
         self.config_name = name
         self.freq_khz = freq_khz
@@ -266,7 +264,7 @@ class MacroContextCache:
         """Update config name and reset cached values."""
         self.set_config(name, self.freq_khz, self.power)
 
-    def get(self) -> Dict[str, str]:
+    def get(self) -> dict[str, str]:
         """Return cached macro context, refreshing once per second."""
         epoch = int(time.time())
         if epoch != self._last_epoch:
@@ -284,18 +282,19 @@ class MacroContextCache:
 
 class AppConfig:
     """Parsed, validated application configuration."""
+
     # RF
     frequency_khz: int
     power: int  # 88..120 dBµV
     antenna_cap: int
     antenna_cap_auto: bool
     audio_dev_hz: int
-    audio_dev_no_rds_hz: Optional[int]
+    audio_dev_no_rds_hz: int | None
     preemph_us: int
     audio_play_enabled: bool
     audio_stream_url: str
     manual_deviation: bool
-    audio_device: Optional[str]
+    audio_device: str | None
 
     # RDS flags
     rds_pi: int
@@ -310,25 +309,25 @@ class AppConfig:
     di_dynamic_pty: bool
 
     # PS
-    rds_ps: List[str]
+    rds_ps: list[str]
     rds_ps_center: bool
     rds_ps_speed: float
 
     # RT
     rds_dev_hz: int  # 10 Hz units (e.g., 200 => 2.00 kHz)
     rds_rt_text: str
-    rds_rt_texts: List[str]
+    rds_rt_texts: list[str]
     rds_rt_speed_s: float
     rds_rt_center: bool
-    rds_rt_file: Optional[str]
-    rds_rt_skip_words: List[str]
+    rds_rt_file: str | None
+    rds_rt_skip_words: list[str]
     rds_rt_ab_mode: str  # 'legacy' | 'auto' | 'bank'
     rds_rt_repeats: int
     rds_rt_gap_ms: int
-    rds_rt_bank: Optional[int]  # used only when ab_mode='bank'
+    rds_rt_bank: int | None  # used only when ab_mode='bank'
     rds_rt_plus_enabled: bool
     rds_rt_plus_app_group: int
-    rds_rt_plus_tags: List[Tuple[int, int, int]]
+    rds_rt_plus_tags: list[tuple[int, int, int]]
 
     # Monitor
     monitor_health: bool
@@ -336,16 +335,16 @@ class AppConfig:
     health_interval_s: float
     recovery_attempts: int
     recovery_backoff_s: float
-    monitor_overmod_ignore_dbfs: Optional[float]
+    monitor_overmod_ignore_dbfs: float | None
 
     # UECP input
     uecp_enabled: bool
     uecp_host: str
     uecp_port: int
-    uecp_site_id: Optional[int]
-    uecp_encoder_id: Optional[int]
+    uecp_site_id: int | None
+    uecp_encoder_id: int | None
 
-    def __init__(self, raw: Dict[str, Any]) -> None:
+    def __init__(self, raw: dict[str, Any]) -> None:
         _enforce(isinstance(raw, dict), "root must be a mapping")
 
         rf = raw.get("rf", {})
@@ -473,7 +472,9 @@ class AppConfig:
         self.monitor_asq = _parse_bool(monitor.get("asq", True), True)
         raw_interval = monitor.get("interval_s", monitor.get("health_interval_s", 1.0))
         interval_val = _parse_float(raw_interval, 1.0)
-        self.health_interval_s = float(interval_val if interval_val is not None else 1.0)
+        self.health_interval_s = float(
+            interval_val if interval_val is not None else 1.0
+        )
         self.recovery_attempts = _parse_int(monitor.get("recovery_attempts", 3), 3)
         self.recovery_backoff_s = (
             _parse_float(monitor.get("recovery_backoff_s", 0.5), 0.5) or 0.5
@@ -502,7 +503,9 @@ class AppConfig:
         # When set, frames are accepted only if broadcast (0) or matching.
         raw_site = uecp.get("site_id", None)
         self.uecp_site_id = (
-            max(0, min(0x3FF, _parse_int(raw_site, 0))) if raw_site is not None else None
+            max(0, min(0x3FF, _parse_int(raw_site, 0)))
+            if raw_site is not None
+            else None
         )
         raw_encoder = uecp.get("encoder_id", None)
         self.uecp_encoder_id = (
@@ -545,7 +548,7 @@ def _fmt_rt(s: str, center: bool) -> str:
     return s[:32]
 
 
-def _resolve_file_rt(cfg: AppConfig, macro_ctx: Dict[str, str]) -> Optional[str]:
+def _resolve_file_rt(cfg: AppConfig, macro_ctx: dict[str, str]) -> str | None:
     """Resolve RT from a file, applying macros and skip rules."""
     if not cfg.rds_rt_file:
         return None
@@ -562,8 +565,8 @@ def _resolve_file_rt(cfg: AppConfig, macro_ctx: Dict[str, str]) -> Optional[str]
 
 
 def _resolve_rotation_rt(
-    cfg: AppConfig, idx: int, macro_ctx: Dict[str, str]
-) -> Optional[str]:
+    cfg: AppConfig, idx: int, macro_ctx: dict[str, str]
+) -> str | None:
     """Resolve RT from list or fallback text."""
     if cfg.rds_rt_texts:
         txt = _apply_macros(cfg.rds_rt_texts[idx % len(cfg.rds_rt_texts)], macro_ctx)
@@ -582,9 +585,9 @@ def _burst_rt(
     ab_mode: str,
     repeats: int,
     gap_ms: int,
-    bank: Optional[int],
-    status_bus: Optional["StatusBus"] = None,
-    cfg: Optional["AppConfig"] = None,
+    bank: int | None,
+    status_bus: StatusBus | None = None,
+    cfg: AppConfig | None = None,
 ) -> None:
     """Send RT bursts with A/B handling and status updates."""
     tx.set_rt_ab_mode(ab_mode)
@@ -615,10 +618,7 @@ def _crc16_ccitt(data: bytes, poly: int = 0x1021, init: int = 0xFFFF) -> int:
     for b in data:
         crc ^= b << 8
         for _ in range(8):
-            if crc & 0x8000:
-                crc = ((crc << 1) ^ poly) & 0xFFFF
-            else:
-                crc = (crc << 1) & 0xFFFF
+            crc = ((crc << 1) ^ poly) & 0xFFFF if crc & 0x8000 else (crc << 1) & 0xFFFF
     return crc ^ 0xFFFF
 
 
@@ -647,7 +647,7 @@ def _uecp_unstuff(data: bytes) -> bytes:
     return bytes(out)
 
 
-def _decode_uecp_frame(frame: bytes) -> Optional[Tuple[int, int, bytes]]:
+def _decode_uecp_frame(frame: bytes) -> tuple[int, int, bytes] | None:
     """Decode a single UECP frame into (address, sequence, message payload)."""
     if len(frame) < 6:
         return None
@@ -669,7 +669,7 @@ def _decode_uecp_frame(frame: bytes) -> Optional[Tuple[int, int, bytes]]:
 
 
 def _uecp_addr_accept(
-    addr: int, site_filter: Optional[int], encoder_filter: Optional[int]
+    addr: int, site_filter: int | None, encoder_filter: int | None
 ) -> bool:
     """Return True if a UECP address passes the configured filters.
 
@@ -680,32 +680,30 @@ def _uecp_addr_accept(
     encoder = addr & 0x3F
     if site_filter is not None and site != 0 and site != site_filter:
         return False
-    if encoder_filter is not None and encoder != 0 and encoder != encoder_filter:
-        return False
-    return True
+    return encoder_filter is None or encoder == 0 or encoder == encoder_filter
 
 
 @dataclass
 class UecpState:
     """Last applied UECP values to avoid redundant writes."""
 
-    pi: Optional[int] = None
-    pty: Optional[int] = None
-    tp: Optional[bool] = None
-    ta: Optional[bool] = None
-    ms: Optional[bool] = None
-    di: Optional[Tuple[bool, bool, bool, bool]] = None
-    ps: Optional[str] = None
+    pi: int | None = None
+    pty: int | None = None
+    tp: bool | None = None
+    ta: bool | None = None
+    ms: bool | None = None
+    di: tuple[bool, bool, bool, bool] | None = None
+    ps: str | None = None
     pscount_set: bool = False
-    rt: Optional[str] = None
-    rt_bank: Optional[int] = None
-    af_code: Optional[int] = None
-    rds_on: Optional[bool] = None
-    ct_enabled: Optional[bool] = None  # None = default (on)
+    rt: str | None = None
+    rt_bank: int | None = None
+    af_code: int | None = None
+    rds_on: bool | None = None
+    ct_enabled: bool | None = None  # None = default (on)
     ct_offset: int = 0
-    ct_key: Optional[Tuple[int, int, int, int]] = None  # (mjd, hour, min, offset)
-    ptyn: Optional[bytes] = None
-    pin: Optional[int] = None
+    ct_key: tuple[int, int, int, int] | None = None  # (mjd, hour, min, offset)
+    ptyn: bytes | None = None
+    pin: int | None = None
 
 
 def _mjd_from_ymd(year: int, month: int, day: int) -> int:
@@ -724,7 +722,7 @@ class UecpBridge:
         self,
         tx: SI4713,
         cfg: AppConfig,
-        status_bus: Optional["StatusBus"],
+        status_bus: StatusBus | None,
         stop_event: threading.Event,
     ) -> None:
         self._tx = tx
@@ -734,11 +732,11 @@ class UecpBridge:
         self._local_stop = threading.Event()
         self._state = UecpState()
         self._lock = threading.Lock()
-        self._threads: List[threading.Thread] = []
-        self._tcp_sock: Optional[socket.socket] = None
-        self._udp_sock: Optional[socket.socket] = None
-        self._last_payloads: Dict[int, bytes] = {}
-        self._last_seq: Optional[int] = None
+        self._threads: list[threading.Thread] = []
+        self._tcp_sock: socket.socket | None = None
+        self._udp_sock: socket.socket | None = None
+        self._last_payloads: dict[int, bytes] = {}
+        self._last_seq: int | None = None
         self._ptyn_ab: int = 0
 
     def update_config(self, cfg: AppConfig) -> None:
@@ -775,10 +773,8 @@ class UecpBridge:
         self._local_stop.set()
         for sock in (self._tcp_sock, self._udp_sock):
             if sock is not None:
-                try:
+                with suppress(Exception):
                     sock.close()
-                except Exception:
-                    pass
         for t in self._threads:
             t.join(timeout=1)
         self._threads = []
@@ -968,10 +964,7 @@ class UecpBridge:
             elif mec == 0x02:
                 # PS: data is the 8 PS chars (DSN/PSN are group[1]/group[2]);
                 # some encoders repeat DSN/PSN inside data (len >= 10).
-                if len(data) >= 10:
-                    ps_bytes = bytes(data[2:10])
-                else:
-                    ps_bytes = bytes(data[:8])
+                ps_bytes = bytes(data[2:10]) if len(data) >= 10 else bytes(data[:8])
                 if len(ps_bytes) < 8:
                     return
                 ps = _rds_decode(ps_bytes)
@@ -1016,7 +1009,7 @@ class UecpBridge:
                     logger.info("UECP RT set (bank %d): %r", bank, rt_text)
                 self._last_payloads[mec] = group
             elif mec == 0x13 and len(data) >= 5:
-                af_code: Optional[int] = None
+                af_code: int | None = None
                 variant = data[0]
                 if variant in (0x05, 0x07, 0x0F):
                     af_code = int(data[4])
@@ -1062,9 +1055,7 @@ class UecpBridge:
             block3 = (c[0] << 8) | c[1]
             block4 = (c[2] << 8) | c[3]
             ok = (
-                self._tx.rds_send_group(
-                    10, (self._ptyn_ab << 4) | seg, block3, block4
-                )
+                self._tx.rds_send_group(10, (self._ptyn_ab << 4) | seg, block3, block4)
                 and ok
             )
         if ok:
@@ -1099,9 +1090,7 @@ class UecpBridge:
         low5 = med[1] & 0x1F
         block3 = (med[2] << 8) | med[3]
         block4 = (med[4] << 8) | med[5]
-        if self._tx.rds_send_group(
-            group_type, low5, block3, block4, version=version
-        ):
+        if self._tx.rds_send_group(group_type, low5, block3, block4, version=version):
             logger.info(
                 "UECP free-format group %d%c sent", group_type, "B" if version else "A"
             )
@@ -1165,40 +1154,82 @@ class UecpBridge:
 # RT+ (RadioText Plus, IEC 62106-6 annex A)
 # ---------------------------------------------------------------------
 
-_RTPLUS_CONTENT_TYPES: List[str] = [
-    "dummy_class", "item.title", "item.album",
-    "item.tracknumber", "item.artist", "item.composition",
-    "item.movement", "item.conductor", "item.composer",
-    "item.band", "item.comment", "item.genre",
-    "info.news", "info.news.local", "info.stockmarket",
-    "info.sport", "info.lottery", "info.horoscope",
-    "info.daily_diversion", "info.health", "info.event",
-    "info.scene", "info.cinema", "info.tv",
-    "info.date_time", "info.weather", "info.traffic",
-    "info.alarm", "info.advertisement", "info.url",
-    "info.other", "stationname.short", "stationname.long",
-    "programme.now", "programme.next", "programme.part",
-    "programme.host", "programme.editorial_staff", "programme.frequency",
-    "programme.homepage", "programme.subchannel", "phone.hotline",
-    "phone.studio", "phone.other", "sms.studio",
-    "sms.other", "email.hotline", "email.studio",
-    "email.other", "mms.other", "chat",
-    "chat.centre", "vote.question", "vote.centre",
-    "unknown", "unknown", "unknown",
-    "place", "appointment", "identifier", "purchase", "get_data",
+_RTPLUS_CONTENT_TYPES: list[str] = [
+    "dummy_class",
+    "item.title",
+    "item.album",
+    "item.tracknumber",
+    "item.artist",
+    "item.composition",
+    "item.movement",
+    "item.conductor",
+    "item.composer",
+    "item.band",
+    "item.comment",
+    "item.genre",
+    "info.news",
+    "info.news.local",
+    "info.stockmarket",
+    "info.sport",
+    "info.lottery",
+    "info.horoscope",
+    "info.daily_diversion",
+    "info.health",
+    "info.event",
+    "info.scene",
+    "info.cinema",
+    "info.tv",
+    "info.date_time",
+    "info.weather",
+    "info.traffic",
+    "info.alarm",
+    "info.advertisement",
+    "info.url",
+    "info.other",
+    "stationname.short",
+    "stationname.long",
+    "programme.now",
+    "programme.next",
+    "programme.part",
+    "programme.host",
+    "programme.editorial_staff",
+    "programme.frequency",
+    "programme.homepage",
+    "programme.subchannel",
+    "phone.hotline",
+    "phone.studio",
+    "phone.other",
+    "sms.studio",
+    "sms.other",
+    "email.hotline",
+    "email.studio",
+    "email.other",
+    "mms.other",
+    "chat",
+    "chat.centre",
+    "vote.question",
+    "vote.centre",
+    "unknown",
+    "unknown",
+    "unknown",
+    "place",
+    "appointment",
+    "identifier",
+    "purchase",
+    "get_data",
 ]
-_RTPLUS_TYPE_CODES: Dict[str, int] = {
+_RTPLUS_TYPE_CODES: dict[str, int] = {
     name: idx for idx, name in enumerate(_RTPLUS_CONTENT_TYPES)
 }
 
 
-def _parse_rtplus_tags(value: Any) -> List[Tuple[int, int, int]]:
+def _parse_rtplus_tags(value: Any) -> list[tuple[int, int, int]]:
     """Parse up to 2 RT+ tags: [{type, start, length}, ...].
 
     type: content-type name (e.g. 'item.artist') or class number 0-63.
     start: 0-63, length: 1-63 characters.
     """
-    tags: List[Tuple[int, int, int]] = []
+    tags: list[tuple[int, int, int]] = []
     if not isinstance(value, list):
         return tags
     for item in value[:2]:
@@ -1218,7 +1249,7 @@ def _parse_rtplus_tags(value: Any) -> List[Tuple[int, int, int]]:
     return tags
 
 
-def _send_rt_plus(tx: SI4713, cfg: "AppConfig") -> None:
+def _send_rt_plus(tx: SI4713, cfg: AppConfig) -> None:
     """Send the RT+ 3A identification and the tag group for the current RT.
 
     The item toggle bit flips on every new message (each burst is a new text).
@@ -1251,9 +1282,9 @@ def apply_config(
     tx: SI4713,
     cfg: AppConfig,
     config_name: str,
-    status_bus: Optional["StatusBus"] = None,
+    status_bus: StatusBus | None = None,
     tx_enabled: bool = True,
-) -> Tuple[str, str, int, float, int, float, List[str]]:
+) -> tuple[str, str, int, float, int, float, list[str]]:
     """Apply a full config and return RT/PS rotation state."""
     # RF / audio
     cap_to_use = _effective_antenna_cap(cfg)
@@ -1314,9 +1345,7 @@ def apply_config(
     )
 
     # PS
-    macro_ctx = _macro_context(
-        config_name, freq_khz=cfg.frequency_khz, power=cfg.power
-    )
+    macro_ctx = _macro_context(config_name, freq_khz=cfg.frequency_khz, power=cfg.power)
     ps_slots, ps_rendered = _render_ps_slots(
         cfg.rds_ps, center=cfg.rds_ps_center, macro_ctx=macro_ctx
     )
@@ -1331,7 +1360,7 @@ def apply_config(
             status_bus.update_ps_current(ps_rendered[0].strip())
 
     # RT initial
-    rt_text: Optional[str] = _resolve_file_rt(cfg, macro_ctx)
+    rt_text: str | None = _resolve_file_rt(cfg, macro_ctx)
     source: str
     rot_idx = 0
     now = time.monotonic()
@@ -1367,7 +1396,7 @@ def reconfigure_live(
     old: AppConfig,
     new: AppConfig,
     config_name: str,
-    status_bus: Optional["StatusBus"] = None,
+    status_bus: StatusBus | None = None,
     tx_enabled: bool = True,
 ) -> bool:
     """Apply diffs and return True if RT should be re-burst."""
@@ -1493,7 +1522,7 @@ def recover_tx(tx: SI4713, cfg: AppConfig) -> bool:
     return False
 
 
-def _stop_player(proc: Optional[subprocess.Popen[bytes]]) -> None:
+def _stop_player(proc: subprocess.Popen[bytes] | None) -> None:
     """Terminate the audio player process if it is running."""
     if proc is None:
         return
@@ -1510,10 +1539,10 @@ def _stop_player(proc: Optional[subprocess.Popen[bytes]]) -> None:
 class AudioPlayerManager:
     """Manage the external audio player process with restart backoff."""
 
-    def __init__(self, adapter_cfg: Dict[str, Any]) -> None:
+    def __init__(self, adapter_cfg: dict[str, Any]) -> None:
         self._adapter_cfg = adapter_cfg
-        self._proc: Optional[subprocess.Popen[bytes]] = None
-        self._last_cfg: Tuple[Optional[bool], Optional[str]] = (None, None)
+        self._proc: subprocess.Popen[bytes] | None = None
+        self._last_cfg: tuple[bool | None, str | None] = (None, None)
         self._restart_backoff_s = 5.0
         self._next_restart_at = 0.0
 
@@ -1560,7 +1589,7 @@ class AudioPlayerManager:
         )
 
         cmd_str = ""
-        cmd_parts: List[str] = []
+        cmd_parts: list[str] = []
         try:
             # Quote device/URL so shlex.split keeps them together even when they contain spaces.
             url_safe = shlex.quote(cfg.audio_stream_url)
@@ -1597,7 +1626,9 @@ class AudioPlayerManager:
         if self._proc is not None:
             exit_code = self._proc.poll()
             if exit_code is not None:
-                logger.warning("Audio player exited (%s); scheduling restart", exit_code)
+                logger.warning(
+                    "Audio player exited (%s); scheduling restart", exit_code
+                )
                 self._proc = None
                 self._last_cfg = (None, None)
                 self._next_restart_at = now + self._restart_backoff_s
@@ -1631,7 +1662,7 @@ class TxStateMachine:
     tx: SI4713
     cfg: AppConfig
     player: AudioPlayerManager
-    status_bus: Optional["StatusBus"] = None
+    status_bus: StatusBus | None = None
     enabled: bool = True
     state: TxState = field(init=False)
 
@@ -1672,7 +1703,7 @@ def load_yaml_config(path: str) -> AppConfig:
     if not path.endswith(".json"):
         logger.critical("Only JSON configs are supported now.")
         raise SystemExit(2)
-    with open(path, "r", encoding="utf-8") as fh:
+    with open(path, encoding="utf-8") as fh:
         raw = json.load(fh)
     if not isinstance(raw, dict):
         logger.critical("Config root must be a mapping/dictionary")
@@ -1680,10 +1711,10 @@ def load_yaml_config(path: str) -> AppConfig:
     return AppConfig(raw)
 
 
-def load_state(path: str) -> Dict[str, Any]:
+def load_state(path: str) -> dict[str, Any]:
     """Load the persisted state file as a dict."""
     try:
-        with open(path, "r", encoding="utf-8") as fh:
+        with open(path, encoding="utf-8") as fh:
             return json.load(fh)
     except FileNotFoundError:
         return {}
@@ -1692,12 +1723,12 @@ def load_state(path: str) -> Dict[str, Any]:
         return {}
 
 
-def save_state(path: str, data: Dict[str, Any]) -> None:
+def save_state(path: str, data: dict[str, Any]) -> None:
     """Merge and persist state data to disk."""
-    payload: Dict[str, Any] = {}
+    payload: dict[str, Any] = {}
     try:
         if os.path.exists(path):
-            with open(path, "r", encoding="utf-8") as fh:
+            with open(path, encoding="utf-8") as fh:
                 existing = json.load(fh)
             if isinstance(existing, dict):
                 payload.update(existing)
@@ -1717,7 +1748,7 @@ def save_state(path: str, data: Dict[str, Any]) -> None:
         logger.error("Failed to write state %s: %s", path, exc)
 
 
-def _first_config_from_dir(cfg_dir: str) -> Optional[str]:
+def _first_config_from_dir(cfg_dir: str) -> str | None:
     """Return the first config file found in a directory."""
     try:
         entries = sorted(
@@ -1734,9 +1765,9 @@ def _first_config_from_dir(cfg_dir: str) -> Optional[str]:
     return None
 
 
-def load_adapter_config(path: str) -> Dict[str, Any]:
+def load_adapter_config(path: str) -> dict[str, Any]:
     """Load adapter config from JSON or simple key/value text."""
-    defaults: Dict[str, Any] = {
+    defaults: dict[str, Any] = {
         "adapter": "ft232h",
         "ftdi_url": "ftdi://ftdi:232h/1",
         "ftdi_reset_pin": RESET_PIN,
@@ -1750,13 +1781,13 @@ def load_adapter_config(path: str) -> Dict[str, Any]:
         return defaults
     try:
         if path.lower().endswith(".json"):
-            with open(path, "r", encoding="utf-8") as fh:
+            with open(path, encoding="utf-8") as fh:
                 data = json.load(fh)
             if isinstance(data, dict):
                 defaults.update(data)
             return defaults
 
-        with open(path, "r", encoding="utf-8") as fh:
+        with open(path, encoding="utf-8") as fh:
             for line in fh:
                 raw = line.split("#", 1)[0].strip()
                 if not raw or ":" not in raw:
@@ -1765,10 +1796,8 @@ def load_adapter_config(path: str) -> Dict[str, Any]:
                 if not key:
                     continue
                 if re.fullmatch(r"-?\d+", val):
-                    try:
+                    with suppress(Exception):
                         val = int(val)
-                    except Exception:
-                        pass
                 defaults[key] = val
     except FileNotFoundError:
         logger.warning("Adapter config %s not found; using defaults", path)
@@ -1863,15 +1892,13 @@ def main() -> None:
         sig = getattr(signal, sig_name, None)
         if sig is None:
             continue
-        try:
+        with suppress(Exception):
             signal.signal(sig, _handle_stop)
-        except Exception:
-            pass
 
     adapter_cfg = load_adapter_config(args.adapter_config)
 
     state = load_state(STATE_PATH)
-    state_tx_enabled: Optional[bool] = None
+    state_tx_enabled: bool | None = None
     if isinstance(state, dict):
         raw_tx_enabled = state.get("tx_enabled")
         if isinstance(raw_tx_enabled, bool):
@@ -1911,12 +1938,10 @@ def main() -> None:
     cfg_name = os.path.splitext(os.path.basename(cfg_path))[0]
     macro_cache = MacroContextCache(cfg_name, cfg.frequency_khz, cfg.power)
     rt_macros_used = _rt_macros_possible(cfg)
-    live_reload_enabled = _parse_bool(
-        os.getenv("SI4713_LIVE_RELOAD", "0"), False
-    )
+    live_reload_enabled = _parse_bool(os.getenv("SI4713_LIVE_RELOAD", "0"), False)
 
-    status_bus: Optional["StatusBus"] = None
-    api_thread: Optional[threading.Thread] = None
+    status_bus: StatusBus | None = None
+    api_thread: threading.Thread | None = None
     backend = (
         args.backend
         or os.getenv("SI4713_BACKEND")
@@ -2028,33 +2053,33 @@ def main() -> None:
             },
         )
 
-    last_rt: Optional[str]
+    last_rt: str | None
     rt_source: str
     rot_idx: int
     next_rotate_at: float
     ps_idx: int
     next_ps_rotate: float
-    last_ps_render: List[str] = []
+    last_ps_render: list[str] = []
     ps_macros_used = False
     next_ps_macro_refresh: float = float("inf")
     player = AudioPlayerManager(adapter_cfg)
-    file_mtime: Optional[float] = _get_mtime(cfg.rds_rt_file)
+    file_mtime: float | None = _get_mtime(cfg.rds_rt_file)
 
     def apply_new_config(
         new_cfg_path: str,
         tx_is_enabled: bool,
-    ) -> Tuple[
+    ) -> tuple[
         AppConfig,
         float,
         str,
         str,
         int,
         float,
-        Optional[float],
+        float | None,
         str,
         int,
         float,
-        List[str],
+        list[str],
         str,
     ]:
         new_cfg_path = os.path.abspath(new_cfg_path)
@@ -2097,9 +2122,9 @@ def main() -> None:
             uecp_bridge.start()
         uecp_sig = new_sig
 
-    tx_state: Optional[TxStateMachine] = None
-    uecp_bridge: Optional[UecpBridge] = None
-    uecp_sig: Tuple[bool, str, int] = (False, "", 0)
+    tx_state: TxStateMachine | None = None
+    uecp_bridge: UecpBridge | None = None
+    uecp_sig: tuple[bool, str, int] = (False, "", 0)
     try:
         if not tx.init(RESET_PIN, REFCLK_HZ):
             logger.error("Init failed")
@@ -2293,12 +2318,18 @@ def main() -> None:
                             candidate = candidate_file
                             new_src = "file"
                         else:
-                            candidate = _resolve_rotation_rt(cfg, rot_idx, macro_ctx) or ""
+                            candidate = (
+                                _resolve_rotation_rt(cfg, rot_idx, macro_ctx) or ""
+                            )
                             new_src = (
                                 f"list[{rot_idx}]" if cfg.rds_rt_texts else "fallback"
                             )
 
-                        if rt_dep_changed or candidate != last_rt or new_src != rt_source:
+                        if (
+                            rt_dep_changed
+                            or candidate != last_rt
+                            or new_src != rt_source
+                        ):
                             rt_source = new_src
                             last_rt = candidate or ""
                             rt_bank = cfg.rds_rt_bank
@@ -2326,7 +2357,9 @@ def main() -> None:
                                     candidate,
                                 )
                     next_cfg_poll = (
-                        time.monotonic() + cfg_poll_s if live_reload_enabled else float("inf")
+                        time.monotonic() + cfg_poll_s
+                        if live_reload_enabled
+                        else float("inf")
                     )
                 except Exception as exc:  # noqa: BLE001
                     logger.error("Failed to reload config: %s", exc)
@@ -2361,11 +2394,7 @@ def main() -> None:
 
             # Health/ASQ monitoring runs on its own interval (cfg.health_interval_s).
             if now >= next_monitor_tick:
-                if (
-                    cfg.monitor_health
-                    and tx_state is not None
-                    and tx_state.enabled
-                ):
+                if cfg.monitor_health and tx_state is not None and tx_state.enabled:
                     status = tx.tx_status()
                     if status is None:
                         health_failures += 1
@@ -2517,7 +2546,11 @@ def main() -> None:
             if not cfg.uecp_enabled and now >= next_rt_file_poll:
                 current_mtime = _get_mtime(cfg.rds_rt_file) if cfg.rds_rt_file else None
 
-                if cfg.rds_rt_file and current_mtime is not None and current_mtime != file_mtime:
+                if (
+                    cfg.rds_rt_file
+                    and current_mtime is not None
+                    and current_mtime != file_mtime
+                ):
                     candidate = _resolve_file_rt(cfg, macro_ctx)
                     if candidate is not None:
                         if candidate != last_rt or rt_source != "file":
@@ -2619,11 +2652,12 @@ def main() -> None:
                 if ps_macros_used:
                     ps_txt = _apply_macros(ps_txt, macro_ctx)
                 ps_text8 = (
-                    _center_fixed(ps_txt, 8) if cfg.rds_ps_center else ps_txt[:8].ljust(8)
+                    _center_fixed(ps_txt, 8)
+                    if cfg.rds_ps_center
+                    else ps_txt[:8].ljust(8)
                 )
                 tx.rds_set_ps(ps_text8, 0)
                 tx.rds_set_pscount(1, max(1, int(round(cfg.rds_ps_speed))))
-                last_ps_render = [ps_text8]
                 if status_bus is not None:
                     status_bus.update_ps_current(ps_text8.strip())
                 logger.info("PS rotate -> list[%d]: %s", ps_idx, ps_text8.strip())
@@ -2643,10 +2677,8 @@ def main() -> None:
                 else float("inf"),
             )
             sleep_s = max(0.05, min(loop_max_sleep_s, next_due - now))
-            try:
+            with suppress(InterruptedError):
                 time.sleep(sleep_s)
-            except InterruptedError:
-                pass
 
     except KeyboardInterrupt:
         logger.info("Stopped by user")
