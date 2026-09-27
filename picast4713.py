@@ -1971,6 +1971,8 @@ def main() -> None:
         args.api_port if args.api_port is not None else adapter_cfg.get("api_port")
     )
     api_host_arg = args.api_host or adapter_cfg.get("api_host")
+    # Explicit --api-port 0 is a hard disable: do not resurrect from state.
+    api_disabled = args.api_port == 0
 
     # Ensure Blinka is enabled automatically when requested
     if backend in {"ft232h_blinka", "blinka"}:
@@ -1981,7 +1983,7 @@ def main() -> None:
         api_port_arg = None
 
     # Resolve API settings from state if CLI not provided
-    if api_port_arg is None and isinstance(state, dict):
+    if api_port_arg is None and isinstance(state, dict) and not api_disabled:
         api_port_arg = state.get("api_port")
         if api_port_arg == 0:
             api_port_arg = None
@@ -1989,6 +1991,9 @@ def main() -> None:
         api_enabled = bool(state.get("api_enabled", False))
     else:
         api_enabled = api_port_arg is not None
+
+    if api_disabled:
+        api_enabled = False
 
     if api_enabled and api_port_arg:
         try:
