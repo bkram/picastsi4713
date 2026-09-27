@@ -338,6 +338,8 @@ class AppConfig:
     uecp_enabled: bool
     uecp_host: str
     uecp_port: int
+    uecp_site_id: Optional[int]
+    uecp_encoder_id: Optional[int]
 
     def __init__(self, raw: Dict[str, Any]) -> None:
         _enforce(isinstance(raw, dict), "root must be a mapping")
@@ -480,6 +482,18 @@ class AppConfig:
         if self.uecp_enabled and not self.rds_enabled:
             logger.warning("UECP enabled; forcing rds.enabled=true")
             self.rds_enabled = True
+        # Optional address filtering: None = accept all (legacy behaviour).
+        # When set, frames are accepted only if broadcast (0) or matching.
+        raw_site = uecp.get("site_id", None)
+        self.uecp_site_id = (
+            max(0, min(0x3FF, _parse_int(raw_site, 0))) if raw_site is not None else None
+        )
+        raw_encoder = uecp.get("encoder_id", None)
+        self.uecp_encoder_id = (
+            max(0, min(0x3F, _parse_int(raw_encoder, 0)))
+            if raw_encoder is not None
+            else None
+        )
 
     @property
     def freq_10khz(self) -> int:
@@ -614,8 +628,8 @@ def _uecp_unstuff(data: bytes) -> bytes:
     return bytes(out)
 
 
-def _decode_uecp_frame(frame: bytes) -> Optional[bytes]:
-    """Decode a single UECP frame into its group payload."""
+def _decode_uecp_frame(frame: bytes) -> Optional[Tuple[int, int, bytes]]:
+    """Decode a single UECP frame into (address, sequence, message payload)."""
     if len(frame) < 6:
         return None
     payload = _uecp_unstuff(frame)
@@ -627,10 +641,29 @@ def _decode_uecp_frame(frame: bytes) -> Optional[bytes]:
         return None
     if len(body) < 4:
         return None
+    addr = int.from_bytes(body[0:2], "big")
+    seq = body[2]
     msg_len = body[3]
     if len(body) < 4 + msg_len:
         return None
-    return body[4 : 4 + msg_len]
+    return addr, seq, body[4 : 4 + msg_len]
+
+
+def _uecp_addr_accept(
+    addr: int, site_filter: Optional[int], encoder_filter: Optional[int]
+) -> bool:
+    """Return True if a UECP address passes the configured filters.
+
+    Broadcast addresses (site 0 / encoder 0) are always accepted.
+    A None filter accepts any address (legacy behaviour).
+    """
+    site = (addr >> 6) & 0x3FF
+    encoder = addr & 0x3F
+    if site_filter is not None and site != 0 and site != site_filter:
+        return False
+    if encoder_filter is not None and encoder != 0 and encoder != encoder_filter:
+        return False
+    return True
 
 
 @dataclass
@@ -671,6 +704,7 @@ class UecpBridge:
         self._tcp_sock: Optional[socket.socket] = None
         self._udp_sock: Optional[socket.socket] = None
         self._last_payloads: Dict[int, bytes] = {}
+        self._last_seq: Optional[int] = None
 
     def update_config(self, cfg: AppConfig) -> None:
         """Update config for host/port changes."""
@@ -792,11 +826,26 @@ class UecpBridge:
             del buf[: end + 1]
             if logger.isEnabledFor(logging.DEBUG):
                 logger.debug("UECP frame: %s", frame.hex())
-            group = _decode_uecp_frame(frame)
-            if group:
-                self._apply_group(group)
-            elif logger.isEnabledFor(logging.DEBUG):
-                logger.debug("UECP frame dropped (CRC/length)")
+            decoded = _decode_uecp_frame(frame)
+            if decoded is None:
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug("UECP frame dropped (CRC/length)")
+                continue
+            addr, seq, group = decoded
+            if not _uecp_addr_accept(
+                addr, self._cfg.uecp_site_id, self._cfg.uecp_encoder_id
+            ):
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug("UECP frame ignored (foreign addr 0x%04X)", addr)
+                continue
+            if self._last_seq is not None and seq != (self._last_seq + 1) & 0xFF:
+                logger.debug(
+                    "UECP sequence gap: %d -> %d (frame(s) lost?)",
+                    self._last_seq,
+                    seq,
+                )
+            self._last_seq = seq
+            self._apply_group(group)
 
     def _apply_group(self, group: bytes) -> None:
         if len(group) < 3:

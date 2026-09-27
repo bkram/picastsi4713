@@ -139,11 +139,18 @@ Enable UECP in the station config:
 "uecp": { "enabled": true, "host": "0.0.0.0", "port": 9100 }
 ```
 
+Optional address filtering (accept only frames for this site/encoder, plus
+broadcast): `"site_id": 1, "encoder_id": 1`.
+
 The listener binds on the given host/port and accepts both TCP and UDP on the same
 port.
 
 Use any UECP-capable encoder (for example, a broadcast processor that emits
 UECP frames). Configure it to send TCP or UDP to the host/port above.
+
+See [docs/uecp.md](docs/uecp.md) for the full protocol reference: supported
+MECs, wire format, address filtering, testing with the included `docs/rdsd.py`
+UECP sender, and troubleshooting.
 
 ## Web UI
 
