@@ -184,6 +184,10 @@
         <section class="screen" data-screen="rds">
           <article class="panel">
             <h3>RDS Flags</h3>
+            <p class="muted">
+              <strong>Note:</strong> SI4713 supports: PS (8 chars), RT (32 chars), PTY, TP, TA, MS, DI. 
+              <strong>Not supported:</strong> Clock Time (CT), Long PS, EON, TMC (hardware limitations).
+            </p>
             <label
               ><input id="rds_enabled" type="checkbox" checked /> Enable
               RDS</label
@@ -279,6 +283,9 @@
         <section class="screen" data-screen="ps">
           <article class="panel">
             <h3>Program Service (PS)</h3>
+            <p class="muted">
+              <strong>Hardware limit:</strong> PS is exactly 8 characters. For longer names, use Radiotext (RT).
+            </p>
             <label
               >PS Interval (s)
               <input id="rds_ps_speed" type="number" min="1" max="40" step="0.1"
