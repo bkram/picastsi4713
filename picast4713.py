@@ -685,6 +685,8 @@ class UecpState:
     ct_enabled: Optional[bool] = None  # None = default (on)
     ct_offset: int = 0
     ct_key: Optional[Tuple[int, int, int, int]] = None  # (mjd, hour, min, offset)
+    ptyn: Optional[bytes] = None
+    pin: Optional[int] = None
 
 
 def _mjd_from_ymd(year: int, month: int, day: int) -> int:
@@ -718,6 +720,7 @@ class UecpBridge:
         self._udp_sock: Optional[socket.socket] = None
         self._last_payloads: Dict[int, bytes] = {}
         self._last_seq: Optional[int] = None
+        self._ptyn_ab: int = 0
 
     def update_config(self, cfg: AppConfig) -> None:
         """Update config for host/port changes."""
@@ -877,7 +880,7 @@ class UecpBridge:
         data = group[3:]
         payload = data[2:] if len(data) >= 2 else data
         last_payload = self._last_payloads.get(mec)
-        if last_payload == data:
+        if last_payload == group:
             if logger.isEnabledFor(logging.DEBUG):
                 logger.debug("UECP mec 0x%02X unchanged; skip", mec)
             return
@@ -893,14 +896,14 @@ class UecpBridge:
                     self._tx.rds_set_pi(pi)
                     self._state.pi = pi
                     logger.info("UECP PI set: 0x%04X", pi)
-                self._last_payloads[mec] = data
+                self._last_payloads[mec] = group
             elif mec == 0x07 and payload:
                 pty = int(payload[0]) & 0x1F
                 if pty != self._state.pty:
                     self._tx.rds_set_pty(pty)
                     self._state.pty = pty
                     logger.info("UECP PTY set: %d", pty)
-                self._last_payloads[mec] = data
+                self._last_payloads[mec] = group
             elif mec == 0x03 and payload:
                 tp = bool((payload[0] >> 1) & 1)
                 ta = bool(payload[0] & 1)
@@ -912,14 +915,14 @@ class UecpBridge:
                     self._tx.rds_set_ta(ta)
                     self._state.ta = ta
                     logger.info("UECP TA set: %s", ta)
-                self._last_payloads[mec] = data
+                self._last_payloads[mec] = group
             elif mec == 0x05 and payload:
                 ms = bool(payload[0] & 1)
                 if ms != self._state.ms:
                     self._tx.rds_set_ms_music(ms)
                     self._state.ms = ms
                     logger.info("UECP MS set: %s", ms)
-                self._last_payloads[mec] = data
+                self._last_payloads[mec] = group
             elif mec == 0x04 and payload:
                 flags = (
                     bool(payload[0] & 0x01),
@@ -942,7 +945,7 @@ class UecpBridge:
                         flags[2],
                         flags[3],
                     )
-                self._last_payloads[mec] = data
+                self._last_payloads[mec] = group
             elif mec == 0x02:
                 # PS: data is the 8 PS chars (DSN/PSN are group[1]/group[2]);
                 # some encoders repeat DSN/PSN inside data (len >= 10).
@@ -963,7 +966,7 @@ class UecpBridge:
                         self._status_bus.update_ps([ps])
                         self._status_bus.update_ps_current(ps.strip())
                     logger.info("UECP PS set: %r", ps)
-                self._last_payloads[mec] = data
+                self._last_payloads[mec] = group
             elif mec == 0x0A and len(data) >= 2:
                 # RT: MED = MEL(1) + control(1) + text (MEL covers control+text)
                 mel = data[0]
@@ -992,7 +995,7 @@ class UecpBridge:
                     if self._status_bus is not None:
                         self._status_bus.update_rt(rt_text, bank)
                     logger.info("UECP RT set (bank %d): %r", bank, rt_text)
-                self._last_payloads[mec] = data
+                self._last_payloads[mec] = group
             elif mec == 0x13 and len(data) >= 5:
                 af_code: Optional[int] = None
                 variant = data[0]
@@ -1002,17 +1005,83 @@ class UecpBridge:
                     self._tx.rds_set_af(af_code)
                     self._state.af_code = af_code
                     logger.info("UECP AF set: code=%d", af_code)
-                self._last_payloads[mec] = data
+                self._last_payloads[mec] = group
             elif mec == 0x0D:
                 # Real time clock -> RDS CT (4A). No DSN/PSN: 8 MED bytes.
                 self._handle_rtc(group[1:9])
-                self._last_payloads[mec] = data
+                self._last_payloads[mec] = group
             elif mec == 0x19 and len(group) >= 2:
                 self._handle_ct_onoff(group[1])
-                self._last_payloads[mec] = data
+                self._last_payloads[mec] = group
             elif mec == 0x1E and len(group) >= 2:
                 self._handle_rds_onoff(group[1])
-                self._last_payloads[mec] = data
+                self._last_payloads[mec] = group
+            elif mec == 0x3E and len(data) >= 8:
+                self._handle_ptyn(data)
+                self._last_payloads[mec] = group
+            elif mec == 0x06 and len(data) >= 2:
+                self._handle_pin(data)
+                self._last_payloads[mec] = group
+            elif mec == 0x24 and len(group) >= 7:
+                self._handle_free_format(group)
+                self._last_payloads[mec] = group
+
+    def _handle_ptyn(self, data: bytes) -> None:
+        """MEC 0x3E: Programme Type Name -> two 10A groups via raw FIFO.
+
+        10A: block B bit0 = segment address, bit4 = A/B text-change flag;
+        blocks C/D carry 4 characters per segment (2 segments for 8 chars).
+        """
+        chars = bytes(data[:8]).ljust(8, b" ")
+        if chars == self._state.ptyn:
+            return
+        self._state.ptyn = chars
+        self._ptyn_ab ^= 1  # toggle A/B to flag the text change
+        ok = True
+        for seg in range(2):
+            c = chars[seg * 4 : seg * 4 + 4]
+            block3 = (c[0] << 8) | c[1]
+            block4 = (c[2] << 8) | c[3]
+            ok = (
+                self._tx.rds_send_group(
+                    10, (self._ptyn_ab << 4) | seg, block3, block4
+                )
+                and ok
+            )
+        if ok:
+            logger.info("UECP PTYN set: %r", chars.decode("latin-1", "replace"))
+
+    def _handle_pin(self, data: bytes) -> None:
+        """MEC 0x06: Programme Item Number -> type 1A group (block C = PIN)."""
+        pin = (int(data[0]) << 8) | int(data[1])
+        if pin == self._state.pin:
+            return
+        self._state.pin = pin
+        if self._tx.rds_send_group(1, 0, pin, 0x0000):
+            day = (pin >> 11) & 0x1F
+            hour = (pin >> 6) & 0x1F
+            minute = pin & 0x3F
+            logger.info("UECP PIN set: day=%d %02d:%02d", day, hour, minute)
+
+    def _handle_free_format(self, group: bytes) -> None:
+        """MEC 0x24: free-format group -> stream verbatim via raw FIFO.
+
+        MED0: bits4..1 group type, bit0 version (0=A, 1=B).
+        MED1: bits4..0 block B low 5 bits (bits6-5 buffer config ignored).
+        MED2-5: blocks C and D. Block A (PI) is filled by the chip.
+        """
+        med = group[1:7]
+        group_type = (med[0] >> 1) & 0xF
+        version = med[0] & 0x01
+        low5 = med[1] & 0x1F
+        block3 = (med[2] << 8) | med[3]
+        block4 = (med[4] << 8) | med[5]
+        if self._tx.rds_send_group(
+            group_type, low5, block3, block4, version=version
+        ):
+            logger.info(
+                "UECP free-format group %d%c sent", group_type, "B" if version else "A"
+            )
 
     def _handle_rtc(self, med: bytes) -> None:
         """MEC 0x0D: encoder real-time clock -> transmit CT group (4A).

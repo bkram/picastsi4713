@@ -753,23 +753,29 @@ class SI4713:
         self._last_rt_bank = bank_to_send
         return bank_to_send
 
-    def rds_send_ct(self, mjd: int, hour: int, minute: int, offset_code: int) -> bool:
-        """Send one Clock-Time group (type 4A) via the raw RDS FIFO.
+    def rds_send_group(
+        self,
+        group_type: int,
+        block2_low: int,
+        block3: int,
+        block4: int,
+        version: int = 0,
+    ) -> bool:
+        """Send one raw RDS group via the TX_RDS FIFO (command 0x35).
 
-        mjd: Modified Julian Date (17 bits), hour/minute: UTC,
-        offset_code: RDS local-time offset (bit5=sign, bits0-4=half-hours).
+        group_type: 0-15, version: 0=A, 1=B.
+        block2_low: low 5 bits of block B (group-specific; TP/PTY are filled
+        from the current misc state). block3/block4: full 16-bit blocks.
         """
         tp = (self.misc >> 10) & 0x01
         pty = (self.misc >> 5) & 0x1F
         block_b = (
-            (4 << 12)  # group type 4A
-            | (0 << 11)  # version A
+            ((group_type & 0xF) << 12)
+            | ((version & 0x01) << 11)
             | (tp << 10)
             | (pty << 5)
-            | ((mjd >> 15) & 0x03)
+            | (block2_low & 0x1F)
         )
-        block_c = (((mjd >> 7) & 0xFF) << 8) | ((hour & 0x1F) << 3) | ((mjd >> 4) & 0x07)
-        block_d = ((mjd & 0x0F) << 12) | ((minute & 0x3F) << 6) | (offset_code & 0x3F)
         with self.lock:
             return self._write_buf(
                 [
@@ -777,12 +783,22 @@ class SI4713:
                     0x06,  # reset FIFO + write
                     (block_b >> 8) & 0xFF,
                     block_b & 0xFF,
-                    (block_c >> 8) & 0xFF,
-                    block_c & 0xFF,
-                    (block_d >> 8) & 0xFF,
-                    block_d & 0xFF,
+                    (block3 >> 8) & 0xFF,
+                    block3 & 0xFF,
+                    (block4 >> 8) & 0xFF,
+                    block4 & 0xFF,
                 ]
             )
+
+    def rds_send_ct(self, mjd: int, hour: int, minute: int, offset_code: int) -> bool:
+        """Send one Clock-Time group (type 4A) via the raw RDS FIFO.
+
+        mjd: Modified Julian Date (17 bits), hour/minute: UTC,
+        offset_code: RDS local-time offset (bit5=sign, bits0-4=half-hours).
+        """
+        block_c = (((mjd >> 7) & 0xFF) << 8) | ((hour & 0x1F) << 3) | ((mjd >> 4) & 0x07)
+        block_d = ((mjd & 0x0F) << 12) | ((minute & 0x3F) << 6) | (offset_code & 0x3F)
+        return self.rds_send_group(4, (mjd >> 15) & 0x03, block_c, block_d)
 
     # ---------- Status / health ----------
 

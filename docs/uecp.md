@@ -45,21 +45,26 @@ are ignored silently.
 | `0x03` | TP/TA  | `rds_set_tp`, `rds_set_ta` |
 | `0x04` | DI     | `rds_set_di` (stereo, artificial head, compressed, dynamic PTY) |
 | `0x05` | M/S    | `rds_set_ms_music` |
+| `0x06` | PIN    | type 1A group via raw FIFO (block C = PIN) |
 | `0x07` | PTY    | `rds_set_pty` |
 | `0x0A` | RT     | `rds_set_rt` — truncated to 32 chars (chip limit), A/B toggle bit honoured |
 | `0x0D` | RTC    | encoder clock → CT group (type 4A), re-sent when the minute changes |
 | `0x13` | AF     | `rds_set_af` (variants 0x05/0x07/0x0F, single AF code) |
 | `0x19` | CT On/Off | enable/disable transmission of the 4A groups from `0x0D` |
 | `0x1E` | RDS On/Off | `rds_enable` (RDS subcarrier on/off) |
+| `0x24` | Free-format group | streamed verbatim via raw FIFO (any group type/version; PI filled by chip) |
+| `0x3E` | PTYN   | two type 10A groups via raw FIFO (A/B toggle on text change) |
 
 CT notes: the SI4713 has no built-in CT scheduler, so 4A groups are generated
 in software from the encoder's RTC messages — one group per minute change
 (encoders re-send RTC frequently, so this tracks the minute edge closely).
 `0x19 00` stops CT transmission; `0x19 01` resumes it and re-sends immediately.
 
-**Not implemented** (possible via the raw RDS FIFO, but not mapped yet):
-PTYN (`0x0B`), PIN (`0x06`), EON, TMC, RT+ / ODA, free-format groups.
-Long RT (>32 chars) is truncated — hardware limit.
+**Not implemented**: EON (`0x14`), TMC (`0x1B`), TDC (`0x0C`), EWS (`0x08`),
+IH (`0x20`), slow labeling (`0x1A`), linkage info (`0x2E`), ODA commands.
+Note that EWS/TDC/IH/TMC and ODAs can already be aired by the sender using
+the **free-format group (`0x24`)** passthrough. Long RT (>32 chars) is
+truncated — hardware limit.
 
 While UECP is enabled, internal RDS updates (PS/RT rotation, RT file) are
 suspended; the UECP source owns the RDS data.
