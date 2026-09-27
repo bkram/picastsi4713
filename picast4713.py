@@ -1409,8 +1409,11 @@ def save_state(path: str, data: Dict[str, Any]) -> None:
         dir_name = os.path.dirname(path)
         if dir_name:
             os.makedirs(dir_name, exist_ok=True)
-        with open(path, "w", encoding="utf-8") as fh:
+        # Atomic write (tmp + replace) so concurrent writers can't corrupt the file
+        tmp = f"{path}.{os.getpid()}.tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
             json.dump(payload, fh, indent=2, sort_keys=True)
+        os.replace(tmp, path)
     except Exception as exc:  # noqa: BLE001
         logger.error("Failed to write state %s: %s", path, exc)
 

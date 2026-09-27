@@ -247,8 +247,8 @@ def _list_cfgs(cfg_dir: str) -> List[str]:
 
 
 def _write_atomic(path: str, data: str) -> None:
-    """Write a file atomically via a temporary file."""
-    tmp = f"{path}.tmp"
+    """Write a file atomically via a temporary file (thread-safe name)."""
+    tmp = f"{path}.{os.getpid()}.{threading.get_ident()}.tmp"
     with open(tmp, "w", encoding="utf-8") as fh:
         fh.write(data)
     os.replace(tmp, path)
@@ -312,8 +312,8 @@ def _update_state_file(state_path: Optional[str], **kwargs: object) -> None:
         dir_name = os.path.dirname(state_path)
         if dir_name:
             os.makedirs(dir_name, exist_ok=True)
-        with open(state_path, "w", encoding="utf-8") as fh:
-            json.dump(data, fh, indent=2, sort_keys=True)
+        # Atomic write so concurrent save_state() can't interleave mid-file
+        _write_atomic(state_path, json.dumps(data, indent=2, sort_keys=True))
     except Exception as exc:
         logger.error("Failed to update state file %s: %s", state_path, exc)
 

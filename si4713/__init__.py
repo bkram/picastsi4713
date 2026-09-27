@@ -330,8 +330,9 @@ class SI4713:
                         "SI4713 backend: FT232H (%s), reset pin=%d", url, reset_pin
                     )
 
-        self.lock: threading.Lock = threading.Lock()
-        self.buf: List[int] = [0] * 10
+        # RLock: public methods hold it across compose+write so concurrent
+        # callers (main loop, UECP threads) cannot interleave commands.
+        self.lock: threading.RLock = threading.RLock()
         self._stop_event: Optional[threading.Event] = None
 
         self.component: int = 0
@@ -365,7 +366,7 @@ class SI4713:
             if "lock" not in self.__dict__ or self.lock is None:
                 import threading
 
-                self.lock = threading.Lock()
+                self.lock = threading.RLock()
 
             self.gpio.setwarnings(False)
             self.gpio.setmode(self.gpio.BCM)
@@ -395,9 +396,7 @@ class SI4713:
                     logger.error("No CTS after POWER_UP")
                     return False
 
-            self.buf[0] = 0x80
-            self.buf[1] = 0x0E
-            if not self._write_buf(2):
+            if not self._write_buf([0x80, 0x0E]):
                 logger.error("GPO_CTL write failed")
                 return False
 
@@ -418,16 +417,16 @@ class SI4713:
 
     # ---------- Low-level helpers ----------
 
-    def _write_buf(self, nbytes: int) -> bool:
+    def _write_buf(self, data: List[int]) -> bool:
+        """Send a command (data[0]=cmd, rest=payload). Callers pass a local
+        buffer so command composition is race-free across threads."""
         retries = 3
         for attempt in range(1, retries + 1):
             if self._should_stop():
                 return False
             try:
                 with self.lock:
-                    self.bus.write_i2c_block_data(
-                        self.addr, self.buf[0], self.buf[1:nbytes]
-                    )
+                    self.bus.write_i2c_block_data(self.addr, data[0], data[1:])
                     time.sleep(0.06)
                     for _ in range(50):
                         if self._should_stop():
@@ -451,19 +450,23 @@ class SI4713:
         return False
 
     def _set_prop(self, prop: int, val: int) -> bool:
-        cached = self._prop_cache.get(prop)
-        if cached is not None and cached == val:
-            return True
-        self.buf[0] = 0x12
-        self.buf[1] = 0x00
-        self.buf[2] = (prop >> 8) & 0xFF
-        self.buf[3] = prop & 0xFF
-        self.buf[4] = (val >> 8) & 0xFF
-        self.buf[5] = val & 0xFF
-        ok = self._write_buf(6)
-        if ok:
-            self._prop_cache[prop] = val
-        return ok
+        with self.lock:
+            cached = self._prop_cache.get(prop)
+            if cached is not None and cached == val:
+                return True
+            ok = self._write_buf(
+                [
+                    0x12,
+                    0x00,
+                    (prop >> 8) & 0xFF,
+                    prop & 0xFF,
+                    (val >> 8) & 0xFF,
+                    val & 0xFF,
+                ]
+            )
+            if ok:
+                self._prop_cache[prop] = val
+            return ok
 
     # ---------- Public control API ----------
 
@@ -486,15 +489,12 @@ class SI4713:
     def set_frequency_10khz(self, f10k: int) -> None:
         if self._last_freq_10khz == f10k:
             return
-        self.buf[0] = 0x30
-        self.buf[1] = 0x00
-        self.buf[2] = (f10k >> 8) & 0xFF
-        self.buf[3] = f10k & 0xFF
-        if not self._write_buf(4):
+        cmd = [0x30, 0x00, (f10k >> 8) & 0xFF, f10k & 0xFF]
+        if not self._write_buf(cmd):
             if self._should_stop():
                 return
             time.sleep(0.01)
-            if not self._write_buf(4):
+            if not self._write_buf(cmd):
                 return
         self._last_freq_10khz = f10k
 
@@ -503,25 +503,22 @@ class SI4713:
         cap = max(0, min(255, cap))
         if self._last_output == (level, cap):
             return
-        self.buf[0] = 0x31
-        self.buf[1] = 0x00
-        self.buf[2] = 0x00
-        self.buf[3] = level
-        self.buf[4] = cap
-        if not self._write_buf(5):
+        cmd = [0x31, 0x00, 0x00, level, cap]
+        if not self._write_buf(cmd):
             if self._should_stop():
                 return
             time.sleep(0.01)
-            if not self._write_buf(5):
+            if not self._write_buf(cmd):
                 return
         self._last_output = (level, cap)
 
     def enable_mpx(self, on: bool) -> None:
-        if on:
-            self.component |= 0x03
-        else:
-            self.component &= ~0x03
-        self._set_prop(0x2100, self.component)
+        with self.lock:
+            if on:
+                self.component |= 0x03
+            else:
+                self.component &= ~0x03
+            self._set_prop(0x2100, self.component)
 
     def set_pilot(self, freq_hz: int, dev_hz: int) -> None:
         self._set_prop(0x2107, freq_hz)
@@ -547,15 +544,16 @@ class SI4713:
         comp_gain: int,
         lim_rel: int,
     ) -> None:
-        if agc_on:
-            self.acomp |= 1
-        else:
-            self.acomp &= ~1
-        if limiter_on:
-            self.acomp |= 1 << 1
-        else:
-            self.acomp &= ~(1 << 1)
-        self._set_prop(0x2200, self.acomp)
+        with self.lock:
+            if agc_on:
+                self.acomp |= 1
+            else:
+                self.acomp &= ~1
+            if limiter_on:
+                self.acomp |= 1 << 1
+            else:
+                self.acomp &= ~(1 << 1)
+            self._set_prop(0x2200, self.acomp)
         self._set_prop(0x2201, comp_thr & 0xFFFF)
         self._set_prop(0x2202, comp_att)
         self._set_prop(0x2203, comp_rel)
@@ -565,39 +563,44 @@ class SI4713:
     # ---------- RDS controls ----------
 
     def rds_enable(self, on: bool) -> None:
-        if on:
-            self.component |= 1 << 2
-        else:
-            self.component &= ~(1 << 2)
-        self._set_prop(0x2100, self.component)
+        with self.lock:
+            if on:
+                self.component |= 1 << 2
+            else:
+                self.component &= ~(1 << 2)
+            self._set_prop(0x2100, self.component)
 
     def rds_set_pi(self, pi: int) -> None:
         self._set_prop(0x2C01, pi)
 
     def rds_set_pty(self, pty: int) -> None:
-        self.misc = (self.misc & 0xFC1F) | ((pty & 0x1F) << 5)
-        self._set_prop(0x2C03, self.misc)
+        with self.lock:
+            self.misc = (self.misc & 0xFC1F) | ((pty & 0x1F) << 5)
+            self._set_prop(0x2C03, self.misc)
 
     def rds_set_tp(self, on: bool) -> None:
-        if on:
-            self.misc |= 1 << 10
-        else:
-            self.misc &= ~(1 << 10)
-        self._set_prop(0x2C03, self.misc)
+        with self.lock:
+            if on:
+                self.misc |= 1 << 10
+            else:
+                self.misc &= ~(1 << 10)
+            self._set_prop(0x2C03, self.misc)
 
     def rds_set_ta(self, on: bool) -> None:
-        if on:
-            self.misc |= 1 << 4
-        else:
-            self.misc &= ~(1 << 4)
-        self._set_prop(0x2C03, self.misc)
+        with self.lock:
+            if on:
+                self.misc |= 1 << 4
+            else:
+                self.misc &= ~(1 << 4)
+            self._set_prop(0x2C03, self.misc)
 
     def rds_set_ms_music(self, on: bool) -> None:
-        if on:
-            self.misc |= 1 << 3
-        else:
-            self.misc &= ~(1 << 3)
-        self._set_prop(0x2C03, self.misc)
+        with self.lock:
+            if on:
+                self.misc |= 1 << 3
+            else:
+                self.misc &= ~(1 << 3)
+            self._set_prop(0x2C03, self.misc)
 
     def rds_set_di(
         self,
@@ -606,21 +609,22 @@ class SI4713:
         compressed: Optional[bool] = None,
         dynamic_pty: Optional[bool] = None,
     ) -> None:
-        if dynamic_pty is not None:
-            self.misc = (
-                (self.misc | (1 << 12)) if dynamic_pty else (self.misc & ~(1 << 12))
-            )
-        if compressed is not None:
-            self.misc = (
-                (self.misc | (1 << 13)) if compressed else (self.misc & ~(1 << 13))
-            )
-        if artificial_head is not None:
-            self.misc = (
-                (self.misc | (1 << 14)) if artificial_head else (self.misc & ~(1 << 14))
-            )
-        if stereo is not None:
-            self.misc = (self.misc | (1 << 15)) if stereo else (self.misc & ~(1 << 15))
-        self._set_prop(0x2C03, self.misc)
+        with self.lock:
+            if dynamic_pty is not None:
+                self.misc = (
+                    (self.misc | (1 << 12)) if dynamic_pty else (self.misc & ~(1 << 12))
+                )
+            if compressed is not None:
+                self.misc = (
+                    (self.misc | (1 << 13)) if compressed else (self.misc & ~(1 << 13))
+                )
+            if artificial_head is not None:
+                self.misc = (
+                    (self.misc | (1 << 14)) if artificial_head else (self.misc & ~(1 << 14))
+                )
+            if stereo is not None:
+                self.misc = (self.misc | (1 << 15)) if stereo else (self.misc & ~(1 << 15))
+            self._set_prop(0x2C03, self.misc)
 
     def rds_set_deviation(self, dev_10hz: int) -> None:
         self._set_prop(0x2103, dev_10hz)
@@ -640,15 +644,9 @@ class SI4713:
             arr[i] = text[i]
         group = slot * 2
 
-        self.buf[0] = 0x36
-        self.buf[1] = group
-        self.buf[2:6] = list(map(ord, arr[0:4]))
-        self._write_buf(6)
-
-        self.buf[0] = 0x36
-        self.buf[1] = group + 1
-        self.buf[2:6] = list(map(ord, arr[4:8]))
-        self._write_buf(6)
+        with self.lock:
+            self._write_buf([0x36, group] + [ord(c) for c in arr[0:4]])
+            self._write_buf([0x36, group + 1] + [ord(c) for c in arr[4:8]])
         self._last_ps[slot] = text
 
     def rds_set_pscount(self, count: int, speed: int) -> None:
@@ -727,26 +725,29 @@ class SI4713:
         # A new text starts at segment 0; we always send a complete set, then repeat
         # (reliability per spec: send at least twice overall). :contentReference[oaicite:2]{index=2}
         idx = 0
-        for seg in range(8):
-            block_b = (
-                (2 << 12)  # group type code = 2
-                | (0 << 11)  # version A
-                | (tp << 10)
-                | (pty << 5)
-                | (ab << 4)  # Text A/B flag
-                | (seg & 0x0F)  # segment address
-            )
-            self.buf[0] = 0x35
-            # reset/load first, then continue
-            self.buf[1] = 0x06 if seg == 0 else 0x04
-            self.buf[2] = (block_b >> 8) & 0xFF
-            self.buf[3] = block_b & 0xFF
-            self.buf[4] = ord(arr[idx])
-            self.buf[5] = ord(arr[idx + 1])
-            self.buf[6] = ord(arr[idx + 2])
-            self.buf[7] = ord(arr[idx + 3])
-            self._write_buf(8)
-            idx += 4
+        with self.lock:
+            for seg in range(8):
+                block_b = (
+                    (2 << 12)  # group type code = 2
+                    | (0 << 11)  # version A
+                    | (tp << 10)
+                    | (pty << 5)
+                    | (ab << 4)  # Text A/B flag
+                    | (seg & 0x0F)  # segment address
+                )
+                cmd = [
+                    0x35,
+                    # reset/load first, then continue
+                    0x06 if seg == 0 else 0x04,
+                    (block_b >> 8) & 0xFF,
+                    block_b & 0xFF,
+                    ord(arr[idx]),
+                    ord(arr[idx + 1]),
+                    ord(arr[idx + 2]),
+                    ord(arr[idx + 3]),
+                ]
+                self._write_buf(cmd)
+                idx += 4
 
         self._last_rt = payload
         self._last_rt_bank = bank_to_send
@@ -758,11 +759,9 @@ class SI4713:
         try:
             if self._should_stop():
                 return None
-            self.buf[0] = 0x33
-            self.buf[1] = 0x00
-            if not self._write_buf(2):
-                return None
             with self.lock:
+                if not self._write_buf([0x33, 0x00]):
+                    return None
                 resp = self.bus.read_i2c_block_data(self.addr, 0, 8)
             freq_10khz = (resp[2] << 8) | resp[3]
             power_level = resp[5]
@@ -791,19 +790,15 @@ class SI4713:
         try:
             if self._should_stop():
                 return False, 0
-            self.buf[0] = 0x34
-            self.buf[1] = 0x00
-            if not self._write_buf(2):
-                return False, 0
             with self.lock:
+                if not self._write_buf([0x34, 0x00]):
+                    return False, 0
                 resp = self.bus.read_i2c_block_data(self.addr, 0, 5)
-            overmod = bool(resp[1] & 0x04)
-            inlevel = resp[4] if resp[4] < 128 else resp[4] - 256
-            self.buf[0] = 0x34
-            self.buf[1] = 0x01
-            if not self._write_buf(2):
+                overmod = bool(resp[1] & 0x04)
+                inlevel = resp[4] if resp[4] < 128 else resp[4] - 256
+                # ACK the ASQ measurement
+                self._write_buf([0x34, 0x01])
                 return overmod, inlevel
-            return overmod, inlevel
         except Exception as exc:  # noqa: BLE001
             logger.error("ASQ read error: %s", exc)
             return False, 0
@@ -812,10 +807,9 @@ class SI4713:
         try:
             if self._should_stop():
                 return 0, 0
-            self.buf[0] = 0x10
-            if not self._write_buf(1):
-                return 0, 0
             with self.lock:
+                if not self._write_buf([0x10]):
+                    return 0, 0
                 resp = self.bus.read_i2c_block_data(self.addr, 0, 9)
             return resp[1], resp[8]
         except Exception as exc:  # noqa: BLE001
