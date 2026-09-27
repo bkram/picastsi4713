@@ -7,8 +7,8 @@
 **Solution**: Set hardware PCM volume and save state:
 
 ```bash
-# Set volume to 75% (adjust as needed)
-amixer -c sndrpihifiberry sset PCM 75%
+# Set volume to 90% (adjust as needed for loud audio)
+amixer -c sndrpihifiberry sset PCM 90%
 
 # Save state (restored on boot via alsa-restore.service)
 sudo alsactl store
@@ -16,14 +16,15 @@ sudo alsactl store
 
 **Verify**:
 ```bash
-amixer -c sndrpihifiberry sget PCM  # Should show 75%
+amixer -c sndrpihifiberry sget PCM  # Should show 90%
 systemctl is-enabled alsa-restore.service  # Should show "static" or "enabled"
 ```
 
 **Current setup**:
-- Hardware PCM mixer: **75%** (persisted)
+- Hardware PCM mixer: **90%** (persisted)
+- mpv volume: **100%**
 - softvol max_dB cap: **-6dB** (safety limit)
-- Result: Loud audio at boot, occasional -4 dBFS peaks acceptable
+- Result: Loud audio at **-7 to -8 dBFS**, occasional peaks acceptable, no overmod
 
 ---
 
