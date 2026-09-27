@@ -1,0 +1,33 @@
+# Ruff configuration for PiCastSI4713.
+# Docs: https://docs.astral.sh/ruff/
+
+target-version = "py38"
+line-length = 88
+
+[lint]
+# Pragmatic rule set: correctness first, docs for public API.
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "SIM", # flake8-simplify
+    "D",   # pydocstyle
+]
+
+ignore = [
+    "E501", # line too long (handled by formatter-friendly 88+ docstrings/URLs)
+    "D105", # missing docstring in magic method
+    "D107", # missing docstring in __init__
+]
+
+[lint.pydocstyle]
+convention = "google"
+
+[lint.per-file-ignores]
+# Reference tools, not production code
+"docs/**" = ["D", "UP", "B", "SIM"]
+# Generated/static web assets are not Python
+"web/static/**" = ["D"]

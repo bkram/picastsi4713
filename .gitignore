@@ -68,7 +68,7 @@ instance/
 # Scrapy stuff:
 .scrapy
 
-# Sphinx documentation
+# Sphinx documentation (local reference material stays untracked)
 docs/
 
 # PyBuilder
@@ -227,3 +227,4 @@ cfg/state.json
 cfg/config.yaml
 rt_file.txt
 deploy.sh
+standards/

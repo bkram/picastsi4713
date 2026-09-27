@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""
-Lightweight Flask API + HTML frontend for PiCastSI4713.
+"""Lightweight Flask API + HTML frontend for PiCastSI4713.
 
 Features:
 - In-memory status (RT/PS/bank/timestamps) shared with the main process.
@@ -17,7 +16,7 @@ import queue
 import threading
 import time
 from collections import deque
-from typing import Any, Deque, Dict, List, NoReturn, Optional, cast
+from typing import Any, cast
 
 from flask import (
     Flask,
@@ -36,7 +35,7 @@ class StatusBus:
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
-        self._state: Dict[str, object] = {
+        self._state: dict[str, object] = {
             "config_path": None,
             "ps": [],
             "ps_current": None,
@@ -55,7 +54,7 @@ class StatusBus:
         with self._lock:
             self._state["config_path"] = os.path.abspath(path)
 
-    def update_ps(self, ps_list: List[str]) -> None:
+    def update_ps(self, ps_list: list[str]) -> None:
         """Update the full PS list."""
         with self._lock:
             self._state["ps"] = list(ps_list)
@@ -87,7 +86,7 @@ class StatusBus:
         with self._lock:
             self._state["pending_tx"] = bool(enabled)
 
-    def pop_pending_tx(self) -> Optional[bool]:
+    def pop_pending_tx(self) -> bool | None:
         """Return and clear the pending TX toggle request."""
         with self._lock:
             val = self._state.get("pending_tx")
@@ -99,13 +98,13 @@ class StatusBus:
         with self._lock:
             self._state["pending_config"] = os.path.abspath(path)
 
-    def current_config_path(self) -> Optional[str]:
+    def current_config_path(self) -> str | None:
         """Return the currently selected config path."""
         with self._lock:
             val = self._state.get("config_path")
             return str(val) if isinstance(val, str) else None
 
-    def pop_pending_config(self) -> Optional[str]:
+    def pop_pending_config(self) -> str | None:
         """Return and clear the pending config switch request."""
         with self._lock:
             path = self._state.get("pending_config")
@@ -124,7 +123,7 @@ class StatusBus:
             self._state["pending_reload"] = False
             return pending
 
-    def snapshot(self) -> Dict[str, object]:
+    def snapshot(self) -> dict[str, object]:
         """Return a serializable snapshot of current status."""
         with self._lock:
             data = dict(self._state)
@@ -140,11 +139,11 @@ class LogBus:
 
     def __init__(self, maxlen: int = 500) -> None:
         self._lock = threading.Lock()
-        self._entries: Deque[Dict[str, object]] = deque(maxlen=maxlen)
+        self._entries: deque[dict[str, object]] = deque(maxlen=maxlen)
         self._next_id = 1
-        self._subscribers: List[queue.Queue] = []
+        self._subscribers: list[queue.Queue] = []
 
-    def add(self, entry: Dict[str, object]) -> Dict[str, object]:
+    def add(self, entry: dict[str, object]) -> dict[str, object]:
         """Append an entry and fan out to subscribers."""
         with self._lock:
             entry = dict(entry)
@@ -160,8 +159,8 @@ class LogBus:
         return entry
 
     def snapshot(
-        self, limit: int = 200, since_id: Optional[int] = None
-    ) -> List[Dict[str, object]]:
+        self, limit: int = 200, since_id: int | None = None
+    ) -> list[dict[str, object]]:
         """Return recent entries, optionally after a given id."""
         with self._lock:
             entries = list(self._entries)
@@ -199,6 +198,7 @@ class LogHandler(logging.Handler):
         self._log_bus = log_bus
 
     def emit(self, record: logging.LogRecord) -> None:
+        """Forward a log record into the LogBus as a dict entry."""
         try:
             ts = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(record.created))
             entry = {
@@ -231,7 +231,7 @@ def _safe_cfg_path(cfg_dir: str, name: str) -> str:
     return path
 
 
-def _list_cfgs(cfg_dir: str) -> List[str]:
+def _list_cfgs(cfg_dir: str) -> list[str]:
     """List available config JSON files in a directory."""
     try:
         return sorted(
@@ -247,17 +247,17 @@ def _list_cfgs(cfg_dir: str) -> List[str]:
 
 
 def _write_atomic(path: str, data: str) -> None:
-    """Write a file atomically via a temporary file."""
-    tmp = f"{path}.tmp"
+    """Write a file atomically via a temporary file (thread-safe name)."""
+    tmp = f"{path}.{os.getpid()}.{threading.get_ident()}.tmp"
     with open(tmp, "w", encoding="utf-8") as fh:
         fh.write(data)
     os.replace(tmp, path)
 
 
-def _load_config_dict(path: str) -> Dict[str, object]:
+def _load_config_dict(path: str) -> dict[str, object]:
     """Load a config JSON file into a dict or abort on failure."""
     try:
-        with open(path, "r", encoding="utf-8") as fh:
+        with open(path, encoding="utf-8") as fh:
             data = json.load(fh)
         if not isinstance(data, dict):
             abort(400, "config root must be a mapping")
@@ -270,12 +270,12 @@ def _load_config_dict(path: str) -> Dict[str, object]:
     raise RuntimeError("unreachable")
 
 
-def _dump_config_dict(path: str, data: Dict[str, object]) -> None:
+def _dump_config_dict(path: str, data: dict[str, object]) -> None:
     """Serialize config data to JSON with stable formatting."""
     _write_atomic(path, json.dumps(data, indent=2, sort_keys=True))
 
 
-def _validate_power_range_dict(cfg: Dict[str, object]) -> None:
+def _validate_power_range_dict(cfg: dict[str, object]) -> None:
     """Validate rf.power is within the allowed range, if present."""
     rf = cfg.get("rf") if isinstance(cfg, dict) else None
     if not isinstance(rf, dict):
@@ -296,22 +296,24 @@ STATIC_DIR = __import__("os").path.join(
 )
 
 
-def _update_state_file(state_path: Optional[str], **kwargs: object) -> None:
+def _update_state_file(state_path: str | None, **kwargs: object) -> None:
     """Merge provided fields into the persisted state file."""
     if not state_path:
         return
     try:
         if os.path.exists(state_path):
-            with open(state_path, "r", encoding="utf-8") as fh:
+            with open(state_path, encoding="utf-8") as fh:
                 data = json.load(fh)
             if not isinstance(data, dict):
                 data = {}
         else:
             data = {}
         data.update(kwargs)
-        os.makedirs(os.path.dirname(state_path), exist_ok=True)
-        with open(state_path, "w", encoding="utf-8") as fh:
-            json.dump(data, fh, indent=2, sort_keys=True)
+        dir_name = os.path.dirname(state_path)
+        if dir_name:
+            os.makedirs(dir_name, exist_ok=True)
+        # Atomic write so concurrent save_state() can't interleave mid-file
+        _write_atomic(state_path, json.dumps(data, indent=2, sort_keys=True))
     except Exception as exc:
         logger.error("Failed to update state file %s: %s", state_path, exc)
 
@@ -319,8 +321,8 @@ def _update_state_file(state_path: Optional[str], **kwargs: object) -> None:
 def create_app(
     status_bus: StatusBus,
     cfg_dir: str,
-    state_path: Optional[str] = None,
-    log_bus: Optional[LogBus] = None,
+    state_path: str | None = None,
+    log_bus: LogBus | None = None,
 ) -> Flask:
     """Create the Flask app with API routes and static UI."""
     app = Flask(__name__, static_folder=STATIC_DIR, static_url_path="/static")

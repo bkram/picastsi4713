@@ -8,9 +8,11 @@ external RDS input.
 
 - 📡 FM transmit control: frequency, power, antenna capacitor (manual or auto)
 - 🎵 RDS: PI/PTY/TP/TA/MS/DI, PS rotation, RT rotation, RT file override, single AF
+- 🏷️ RT+ (RadioText Plus): tag title/artist etc. in RT for modern receivers
+- 🕐 CT (clock/time) in UECP mode; PTYN/PIN/free-format groups via raw RDS FIFO
 - 🌐 UECP input (TCP/UDP) for external RDS sources
 - 🔄 Hot reload: apply config diffs without restarting
-- 🛡️ Health monitoring with recovery attempts and ASQ logging
+- 🛡️ Health monitoring with recovery attempts and ASQ logging (while TX is on)
 - 🎧 Optional audio stream playback per station config
 
 ## Requirements
@@ -102,7 +104,34 @@ Notes:
 - `rds.deviation_hz` is in 10 Hz units (e.g., 200 = 2.00 kHz).
 - RT file override: set `rds.rt.file_path`; it overrides the RT list when present.
 - Macros: `{time}`, `{date}`, `{datetime}`, `{config}`, `{freq}`, `{power}` in PS/RT texts.
+- Text encoding: configs are UTF-8; texts are mapped to the RDS character set
+  (IEC 62106 Annex E). Diacritics (é, ä, ñ, ü, …) and symbols (€, £, $, °, §)
+  are supported; unmappable characters fall back to their base letter or a space.
 - When `uecp.enabled` is true, `rds.enabled` is forced on.
+
+RT+ (RadioText Plus) tags elements inside the RT for modern receivers
+(title, artist, …). Configure up to two tags under `rds.rt.plus`:
+
+```json
+"rt": {
+  "texts": ["House of the Rising Sun - The Animals"],
+  "plus": {
+    "enabled": true,
+    "app_group": 12,
+    "tags": [
+      { "type": "item.title", "start": 0, "length": 23 },
+      { "type": "item.artist", "start": 24, "length": 11 }
+    ]
+  }
+}
+```
+
+- `type`: content-type name (`item.title`, `item.artist`, `info.url`,
+  `stationname.long`, …) or class number 0-63.
+- `start`/`length`: character position/length inside the 32-char RT.
+- Tags are re-sent (3A identification + tag group) with every new RT; the item
+  toggle bit flips per message. Note: `start`/`length` are fixed per config —
+  keep them valid for your RT texts.
 
 Audio stream playback is configured per station in JSON and globally in the
 adapter config. Example per-station block:
@@ -129,7 +158,8 @@ mpv --audio-device=help
 ## UECP mode (external RDS, experimental)
 
 UECP mode is experimental. It accepts binary UECP frames over TCP or UDP and applies only the fields
-the SI4713 supports: PI, PTY, TP, TA, MS, DI, PS, RT. Internal RDS updates are
+the SI4713 supports: PI, PTY, TP, TA, MS, DI, PS, RT, a single AF, and CT
+(clock/time, generated in software from the encoder's RTC). Internal RDS updates are
 ignored while UECP is enabled. The SI4713 only supports 32 chars of RT; UECP RT
 payloads are truncated to 32.
 
@@ -139,11 +169,18 @@ Enable UECP in the station config:
 "uecp": { "enabled": true, "host": "0.0.0.0", "port": 9100 }
 ```
 
+Optional address filtering (accept only frames for this site/encoder, plus
+broadcast): `"site_id": 1, "encoder_id": 1`.
+
 The listener binds on the given host/port and accepts both TCP and UDP on the same
 port.
 
 Use any UECP-capable encoder (for example, a broadcast processor that emits
 UECP frames). Configure it to send TCP or UDP to the host/port above.
+
+See [uecp.md](uecp.md) for the full protocol reference: supported
+MECs, wire format, address filtering, testing with the included `docs/rdsd.py`
+UECP sender, and troubleshooting.
 
 ## Web UI
 

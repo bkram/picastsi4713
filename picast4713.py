@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""
-SI4713 FM+RDS transmitter
+"""SI4713 FM+RDS transmitter.
 
 Usage:
     python3 picast4713.py --cfg station.json
@@ -15,16 +14,19 @@ import os
 import re
 import signal
 import shlex
+import signal
+import socket
 import subprocess
 import sys
 import threading
 import time
-import socket
+from contextlib import suppress
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from si4713 import SI4713
+from si4713.charset import decode as _rds_decode
 
 if TYPE_CHECKING:
     from web import LogBus, StatusBus
@@ -34,7 +36,7 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------
 
 
-def _resolve_log_level(value: Optional[str]) -> int:
+def _resolve_log_level(value: str | None) -> int:
     """Resolve log level from string or numeric value."""
     if not value:
         return logging.INFO
@@ -93,7 +95,7 @@ def _parse_bool(value: Any, default: bool) -> bool:
     return default
 
 
-def _parse_float(value: Any, default: Optional[float] = None) -> Optional[float]:
+def _parse_float(value: Any, default: float | None = None) -> float | None:
     """Parse a float or return a default when conversion fails."""
     try:
         return float(value)
@@ -101,7 +103,7 @@ def _parse_float(value: Any, default: Optional[float] = None) -> Optional[float]
         return default
 
 
-def _parse_antenna_cap(value: Any, default: int = 4) -> Tuple[int, bool]:
+def _parse_antenna_cap(value: Any, default: int = 4) -> tuple[int, bool]:
     """Return (cap_value, is_auto). Value of 0 or 'auto'/None => auto-tune."""
     if value is None:
         return 0, True
@@ -117,14 +119,14 @@ def _parse_str(value: Any, default: str = "") -> str:
     return str(value) if isinstance(value, (str, int, float)) else default
 
 
-def _list_of_str(v: Any) -> List[str]:
+def _list_of_str(v: Any) -> list[str]:
     """Return a list of stringified items or an empty list."""
     if not isinstance(v, list):
         return []
     return [str(x) for x in v]
 
 
-def _get_mtime(path: Optional[str]) -> Optional[float]:
+def _get_mtime(path: str | None) -> float | None:
     """Get mtime for path, returning None for missing or invalid paths."""
     if not path:
         return None
@@ -136,10 +138,10 @@ def _get_mtime(path: Optional[str]) -> Optional[float]:
         return None
 
 
-def _read_text_file(path: str, max_bytes: int = 8192) -> Optional[str]:
+def _read_text_file(path: str, max_bytes: int = 8192) -> str | None:
     """Read a text file with newline normalization and a size cap."""
     try:
-        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+        with open(path, encoding="utf-8", errors="replace") as fh:
             data = fh.read(max_bytes)
         return data.replace("\r\n", "\n").replace("\r", "\n").strip("\n")
     except Exception as exc:  # noqa: BLE001
@@ -170,17 +172,15 @@ def _normalize_rt_source(raw: str) -> str:
     return " ".join(line.split())
 
 
-_MACRO_PATTERN = re.compile(
-    r"{(time|date|datetime|config|freq|power)}", re.IGNORECASE
-)
+_MACRO_PATTERN = re.compile(r"{(time|date|datetime|config|freq|power)}", re.IGNORECASE)
 
 
 def _macro_context(
     config_name: str,
-    now: Optional[float] = None,
-    freq_khz: Optional[int] = None,
-    power: Optional[int] = None,
-) -> Dict[str, str]:
+    now: float | None = None,
+    freq_khz: int | None = None,
+    power: int | None = None,
+) -> dict[str, str]:
     """Build macro context values for PS/RT substitution."""
     ts = time.localtime(now or time.time())
     base = os.path.splitext(os.path.basename(config_name or ""))[0]
@@ -200,7 +200,7 @@ def _macro_context(
     }
 
 
-def _apply_macros(text: str, ctx: Dict[str, str]) -> str:
+def _apply_macros(text: str, ctx: dict[str, str]) -> str:
     """Apply macro replacements in a text string."""
     if not text:
         return ""
@@ -218,11 +218,11 @@ def _has_macros(text: str) -> bool:
 
 
 def _render_ps_slots(
-    ps: List[str], center: bool, macro_ctx: Dict[str, str]
-) -> Tuple[List[Tuple[str, int]], List[str]]:
+    ps: list[str], center: bool, macro_ctx: dict[str, str]
+) -> tuple[list[tuple[str, int]], list[str]]:
     """Render PS slots and their indices with macros and centering."""
-    slots: List[Tuple[str, int]] = []
-    rendered: List[str] = []
+    slots: list[tuple[str, int]] = []
+    rendered: list[str] = []
     for idx, item in enumerate(ps):
         txt = _apply_macros(item or "", macro_ctx)
         text8 = _center_fixed(txt, 8) if center else txt[:8].ljust(8)
@@ -231,7 +231,7 @@ def _render_ps_slots(
     return slots, rendered
 
 
-def _rt_macros_possible(cfg: "AppConfig") -> bool:
+def _rt_macros_possible(cfg: AppConfig) -> bool:
     """Return True if RT sources might contain macros."""
     if _has_macros(cfg.rds_rt_text):
         return True
@@ -240,7 +240,7 @@ def _rt_macros_possible(cfg: "AppConfig") -> bool:
     return bool(cfg.rds_rt_file)
 
 
-_EMPTY_MACRO_CTX: Dict[str, str] = {}
+_EMPTY_MACRO_CTX: dict[str, str] = {}
 
 
 @dataclass
@@ -248,12 +248,12 @@ class MacroContextCache:
     """Cache macro context values, refreshing at most once per second."""
 
     config_name: str
-    freq_khz: Optional[int] = None
-    power: Optional[int] = None
+    freq_khz: int | None = None
+    power: int | None = None
     _last_epoch: int = 0
-    _last_ctx: Dict[str, str] = field(default_factory=dict)
+    _last_ctx: dict[str, str] = field(default_factory=dict)
 
-    def set_config(self, name: str, freq_khz: Optional[int], power: Optional[int]) -> None:
+    def set_config(self, name: str, freq_khz: int | None, power: int | None) -> None:
         """Update config name/frequency and reset cached values."""
         self.config_name = name
         self.freq_khz = freq_khz
@@ -265,7 +265,7 @@ class MacroContextCache:
         """Update config name and reset cached values."""
         self.set_config(name, self.freq_khz, self.power)
 
-    def get(self) -> Dict[str, str]:
+    def get(self) -> dict[str, str]:
         """Return cached macro context, refreshing once per second."""
         epoch = int(time.time())
         if epoch != self._last_epoch:
@@ -283,18 +283,19 @@ class MacroContextCache:
 
 class AppConfig:
     """Parsed, validated application configuration."""
+
     # RF
     frequency_khz: int
     power: int  # 88..120 dBµV
     antenna_cap: int
     antenna_cap_auto: bool
     audio_dev_hz: int
-    audio_dev_no_rds_hz: Optional[int]
+    audio_dev_no_rds_hz: int | None
     preemph_us: int
     audio_play_enabled: bool
     audio_stream_url: str
     manual_deviation: bool
-    audio_device: Optional[str]
+    audio_device: str | None
 
     # RDS flags
     rds_pi: int
@@ -309,22 +310,25 @@ class AppConfig:
     di_dynamic_pty: bool
 
     # PS
-    rds_ps: List[str]
+    rds_ps: list[str]
     rds_ps_center: bool
     rds_ps_speed: float
 
     # RT
     rds_dev_hz: int  # 10 Hz units (e.g., 200 => 2.00 kHz)
     rds_rt_text: str
-    rds_rt_texts: List[str]
+    rds_rt_texts: list[str]
     rds_rt_speed_s: float
     rds_rt_center: bool
-    rds_rt_file: Optional[str]
-    rds_rt_skip_words: List[str]
+    rds_rt_file: str | None
+    rds_rt_skip_words: list[str]
     rds_rt_ab_mode: str  # 'legacy' | 'auto' | 'bank'
     rds_rt_repeats: int
     rds_rt_gap_ms: int
-    rds_rt_bank: Optional[int]  # used only when ab_mode='bank'
+    rds_rt_bank: int | None  # used only when ab_mode='bank'
+    rds_rt_plus_enabled: bool
+    rds_rt_plus_app_group: int
+    rds_rt_plus_tags: list[tuple[int, int, int]]
 
     # Monitor
     monitor_health: bool
@@ -332,14 +336,16 @@ class AppConfig:
     health_interval_s: float
     recovery_attempts: int
     recovery_backoff_s: float
-    monitor_overmod_ignore_dbfs: Optional[float]
+    monitor_overmod_ignore_dbfs: float | None
 
     # UECP input
     uecp_enabled: bool
     uecp_host: str
     uecp_port: int
+    uecp_site_id: int | None
+    uecp_encoder_id: int | None
 
-    def __init__(self, raw: Dict[str, Any]) -> None:
+    def __init__(self, raw: dict[str, Any]) -> None:
         _enforce(isinstance(raw, dict), "root must be a mapping")
 
         rf = raw.get("rf", {})
@@ -431,7 +437,7 @@ class AppConfig:
         self.rds_rt_texts = [
             t for t in _list_of_str(rt_cfg.get("texts", [])) if t.strip()
         ]
-        self.rds_rt_speed_s = float(rt_cfg.get("speed_s", 10.0))
+        self.rds_rt_speed_s = _parse_float(rt_cfg.get("speed_s", 10.0), 10.0) or 10.0
         self.rds_rt_center = _parse_bool(rt_cfg.get("center", True), True)
         file_path = _parse_str(rt_cfg.get("file_path", ""), "")
         self.rds_rt_file = file_path if file_path.strip() else None
@@ -450,14 +456,30 @@ class AppConfig:
         bank_val = rt_cfg.get("bank", None)
         self.rds_rt_bank = (int(bank_val) & 1) if bank_val is not None else None
 
+        # RT+ (RadioText Plus ODA, IEC 62106-6 annex A)
+        plus_cfg = rt_cfg.get("plus", {})
+        if not isinstance(plus_cfg, dict):
+            plus_cfg = {}
+        self.rds_rt_plus_enabled = _parse_bool(plus_cfg.get("enabled", False), False)
+        app_group = _parse_int(plus_cfg.get("app_group", 12), 12)
+        self.rds_rt_plus_app_group = app_group if 1 <= app_group <= 15 else 12
+        self.rds_rt_plus_tags = _parse_rtplus_tags(plus_cfg.get("tags", []))
+        if self.rds_rt_plus_enabled and not self.rds_rt_plus_tags:
+            logger.warning("rds.rt.plus enabled but no valid tags; RT+ disabled")
+            self.rds_rt_plus_enabled = False
+
         # Monitor
         self.monitor_health = _parse_bool(monitor.get("health", True), True)
         self.monitor_asq = _parse_bool(monitor.get("asq", True), True)
         raw_interval = monitor.get("interval_s", monitor.get("health_interval_s", 1.0))
         interval_val = _parse_float(raw_interval, 1.0)
-        self.health_interval_s = float(interval_val if interval_val is not None else 1.0)
+        self.health_interval_s = float(
+            interval_val if interval_val is not None else 1.0
+        )
         self.recovery_attempts = _parse_int(monitor.get("recovery_attempts", 3), 3)
-        self.recovery_backoff_s = float(monitor.get("recovery_backoff_s", 0.5))
+        self.recovery_backoff_s = (
+            _parse_float(monitor.get("recovery_backoff_s", 0.5), 0.5) or 0.5
+        )
         _missing = object()
         raw_ignore = monitor.get("overmod_ignore_below_dbfs", _missing)
         # Default to -5 dBFS when not provided; explicit null disables.
@@ -478,6 +500,20 @@ class AppConfig:
         if self.uecp_enabled and not self.rds_enabled:
             logger.warning("UECP enabled; forcing rds.enabled=true")
             self.rds_enabled = True
+        # Optional address filtering: None = accept all (legacy behaviour).
+        # When set, frames are accepted only if broadcast (0) or matching.
+        raw_site = uecp.get("site_id", None)
+        self.uecp_site_id = (
+            max(0, min(0x3FF, _parse_int(raw_site, 0)))
+            if raw_site is not None
+            else None
+        )
+        raw_encoder = uecp.get("encoder_id", None)
+        self.uecp_encoder_id = (
+            max(0, min(0x3F, _parse_int(raw_encoder, 0)))
+            if raw_encoder is not None
+            else None
+        )
 
     @property
     def freq_10khz(self) -> int:
@@ -513,7 +549,7 @@ def _fmt_rt(s: str, center: bool) -> str:
     return s[:32]
 
 
-def _resolve_file_rt(cfg: AppConfig, macro_ctx: Dict[str, str]) -> Optional[str]:
+def _resolve_file_rt(cfg: AppConfig, macro_ctx: dict[str, str]) -> str | None:
     """Resolve RT from a file, applying macros and skip rules."""
     if not cfg.rds_rt_file:
         return None
@@ -530,8 +566,8 @@ def _resolve_file_rt(cfg: AppConfig, macro_ctx: Dict[str, str]) -> Optional[str]
 
 
 def _resolve_rotation_rt(
-    cfg: AppConfig, idx: int, macro_ctx: Dict[str, str]
-) -> Optional[str]:
+    cfg: AppConfig, idx: int, macro_ctx: dict[str, str]
+) -> str | None:
     """Resolve RT from list or fallback text."""
     if cfg.rds_rt_texts:
         txt = _apply_macros(cfg.rds_rt_texts[idx % len(cfg.rds_rt_texts)], macro_ctx)
@@ -550,8 +586,9 @@ def _burst_rt(
     ab_mode: str,
     repeats: int,
     gap_ms: int,
-    bank: Optional[int],
-    status_bus: Optional["StatusBus"] = None,
+    bank: int | None,
+    status_bus: StatusBus | None = None,
+    cfg: AppConfig | None = None,
 ) -> None:
     """Send RT bursts with A/B handling and status updates."""
     tx.set_rt_ab_mode(ab_mode)
@@ -571,6 +608,669 @@ def _burst_rt(
             text,
             bank=bank if ab_mode == "bank" else None,
             cr_terminate=center,
+        )
+    if cfg is not None:
+        _send_rt_plus(tx, cfg)
+
+
+def _crc16_ccitt(data: bytes, poly: int = 0x1021, init: int = 0xFFFF) -> int:
+    """Compute CRC-16/CCITT-False for UECP frames."""
+    crc = init
+    for b in data:
+        crc ^= b << 8
+        for _ in range(8):
+            crc = ((crc << 1) ^ poly) & 0xFFFF if crc & 0x8000 else (crc << 1) & 0xFFFF
+    return crc ^ 0xFFFF
+
+
+def _uecp_unstuff(data: bytes) -> bytes:
+    """Remove UECP byte stuffing (0xFD 00/01/02 escapes)."""
+    out = bytearray()
+    i = 0
+    while i < len(data):
+        b = data[i]
+        if b != 0xFD:
+            out.append(b)
+            i += 1
+            continue
+        if i + 1 >= len(data):
+            return b""
+        esc = data[i + 1]
+        if esc == 0x00:
+            out.append(0xFD)
+        elif esc == 0x01:
+            out.append(0xFE)
+        elif esc == 0x02:
+            out.append(0xFF)
+        else:
+            return b""
+        i += 2
+    return bytes(out)
+
+
+def _decode_uecp_frame(frame: bytes) -> tuple[int, int, bytes] | None:
+    """Decode a single UECP frame into (address, sequence, message payload)."""
+    if len(frame) < 6:
+        return None
+    payload = _uecp_unstuff(frame)
+    if len(payload) < 6:
+        return None
+    body = payload[:-2]
+    got_crc = int.from_bytes(payload[-2:], "big")
+    if _crc16_ccitt(body) != got_crc:
+        return None
+    if len(body) < 4:
+        return None
+    addr = int.from_bytes(body[0:2], "big")
+    seq = body[2]
+    msg_len = body[3]
+    if len(body) < 4 + msg_len:
+        return None
+    return addr, seq, body[4 : 4 + msg_len]
+
+
+def _uecp_addr_accept(
+    addr: int, site_filter: int | None, encoder_filter: int | None
+) -> bool:
+    """Return True if a UECP address passes the configured filters.
+
+    Broadcast addresses (site 0 / encoder 0) are always accepted.
+    A None filter accepts any address (legacy behaviour).
+    """
+    site = (addr >> 6) & 0x3FF
+    encoder = addr & 0x3F
+    if site_filter is not None and site != 0 and site != site_filter:
+        return False
+    return encoder_filter is None or encoder == 0 or encoder == encoder_filter
+
+
+@dataclass
+class UecpState:
+    """Last applied UECP values to avoid redundant writes."""
+
+    pi: int | None = None
+    pty: int | None = None
+    tp: bool | None = None
+    ta: bool | None = None
+    ms: bool | None = None
+    di: tuple[bool, bool, bool, bool] | None = None
+    ps: str | None = None
+    pscount_set: bool = False
+    rt: str | None = None
+    rt_bank: int | None = None
+    af_code: int | None = None
+    rds_on: bool | None = None
+    ct_enabled: bool | None = None  # None = default (on)
+    ct_offset: int = 0
+    ct_key: tuple[int, int, int, int] | None = None  # (mjd, hour, min, offset)
+    ptyn: bytes | None = None
+    pin: int | None = None
+
+
+def _mjd_from_ymd(year: int, month: int, day: int) -> int:
+    """Modified Julian Date for a UTC calendar date (days since 1858-11-17)."""
+    a = (14 - month) // 12
+    y = year + 4800 - a
+    m = month + 12 * a - 3
+    jdn = day + (153 * m + 2) // 5 + 365 * y + y // 4 - y // 100 + y // 400 - 32045
+    return jdn - 2400001
+
+
+class UecpBridge:
+    """Listen for UECP frames and apply supported fields to SI4713."""
+
+    def __init__(
+        self,
+        tx: SI4713,
+        cfg: AppConfig,
+        status_bus: StatusBus | None,
+        stop_event: threading.Event,
+    ) -> None:
+        self._tx = tx
+        self._cfg = cfg
+        self._status_bus = status_bus
+        self._stop_event = stop_event
+        self._local_stop = threading.Event()
+        self._state = UecpState()
+        self._lock = threading.Lock()
+        self._threads: list[threading.Thread] = []
+        self._tcp_sock: socket.socket | None = None
+        self._udp_sock: socket.socket | None = None
+        self._last_payloads: dict[int, bytes] = {}
+        self._last_seq: int | None = None
+        self._ptyn_ab: int = 0
+
+    def update_config(self, cfg: AppConfig) -> None:
+        """Update config for host/port changes."""
+        self._cfg = cfg
+
+    def start(self) -> None:
+        """Start TCP and UDP listeners."""
+        self._local_stop.clear()
+        self._start_udp()
+        self._start_tcp()
+        self._prime_ps()
+
+    def _prime_ps(self) -> None:
+        """Send default PI/PS once to override the SI4713 default label."""
+        ps_text = "- RDS -"
+        with self._lock:
+            try:
+                self._tx.rds_set_ps(ps_text, 0)
+                self._tx.rds_set_pscount(1, 1)
+                self._tx.rds_set_pi(0xFFFF)
+                self._state.ps = ps_text
+                self._state.pscount_set = True
+                self._state.pi = 0xFFFF
+                if self._status_bus is not None:
+                    self._status_bus.update_ps([ps_text])
+                    self._status_bus.update_ps_current(ps_text.strip())
+                logger.info("UECP primed PS=%r PI=0xFFFF", ps_text)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("UECP prime failed: %s", exc)
+
+    def stop(self) -> None:
+        """Stop listeners and close sockets."""
+        self._local_stop.set()
+        for sock in (self._tcp_sock, self._udp_sock):
+            if sock is not None:
+                with suppress(Exception):
+                    sock.close()
+        for t in self._threads:
+            t.join(timeout=1)
+        self._threads = []
+
+    def reset_state(self) -> None:
+        """Clear cached UECP values so the next frames re-apply."""
+        with self._lock:
+            self._state = UecpState()
+            self._last_payloads.clear()
+
+    def _start_udp(self) -> None:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.bind((self._cfg.uecp_host, self._cfg.uecp_port))
+        sock.settimeout(0.5)
+        self._udp_sock = sock
+        t = threading.Thread(target=self._udp_loop, name="UECP-UDP", daemon=True)
+        t.start()
+        self._threads.append(t)
+
+    def _start_tcp(self) -> None:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.bind((self._cfg.uecp_host, self._cfg.uecp_port))
+        sock.listen(1)
+        sock.settimeout(0.5)
+        self._tcp_sock = sock
+        t = threading.Thread(target=self._tcp_loop, name="UECP-TCP", daemon=True)
+        t.start()
+        self._threads.append(t)
+
+    def _udp_loop(self) -> None:
+        while not self._stop_event.is_set() and not self._local_stop.is_set():
+            try:
+                data, _addr = self._udp_sock.recvfrom(4096)  # type: ignore[arg-type]
+            except socket.timeout:
+                continue
+            except Exception:
+                break
+            buf = bytearray()
+            self._handle_stream(buf, data)
+
+    def _tcp_loop(self) -> None:
+        while not self._stop_event.is_set() and not self._local_stop.is_set():
+            try:
+                conn, _addr = self._tcp_sock.accept()  # type: ignore[union-attr]
+            except socket.timeout:
+                continue
+            except Exception:
+                break
+            with conn:
+                conn.settimeout(0.5)
+                buf = bytearray()
+                while not self._stop_event.is_set() and not self._local_stop.is_set():
+                    try:
+                        chunk = conn.recv(4096)
+                    except socket.timeout:
+                        continue
+                    except Exception:
+                        break
+                    if not chunk:
+                        break
+                    self._handle_stream(buf, chunk)
+
+    def _handle_stream(self, buf: bytearray, data: bytes) -> None:
+        buf.extend(data)
+        while True:
+            try:
+                start = buf.index(0xFE)
+            except ValueError:
+                buf.clear()
+                break
+            if start > 0:
+                del buf[:start]
+            try:
+                end = buf.index(0xFF, 1)
+            except ValueError:
+                break
+            frame = bytes(buf[1:end])
+            del buf[: end + 1]
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug("UECP frame: %s", frame.hex())
+            decoded = _decode_uecp_frame(frame)
+            if decoded is None:
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug("UECP frame dropped (CRC/length)")
+                continue
+            addr, seq, group = decoded
+            if not _uecp_addr_accept(
+                addr, self._cfg.uecp_site_id, self._cfg.uecp_encoder_id
+            ):
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug("UECP frame ignored (foreign addr 0x%04X)", addr)
+                continue
+            if self._last_seq is not None and seq != (self._last_seq + 1) & 0xFF:
+                logger.debug(
+                    "UECP sequence gap: %d -> %d (frame(s) lost?)",
+                    self._last_seq,
+                    seq,
+                )
+            self._last_seq = seq
+            self._apply_group(group)
+
+    def _apply_group(self, group: bytes) -> None:
+        if len(group) < 3:
+            return
+        mec = group[0]
+        ctrl1 = group[1]
+        ctrl2 = group[2]
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(
+                "UECP group: mec=0x%02X ctrl1=0x%02X ctrl2=0x%02X len=%d",
+                mec,
+                ctrl1,
+                ctrl2,
+                len(group) - 3,
+            )
+        data = group[3:]
+        payload = data[2:] if len(data) >= 2 else data
+        last_payload = self._last_payloads.get(mec)
+        if last_payload == group:
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug("UECP mec 0x%02X unchanged; skip", mec)
+            return
+        with self._lock:
+            if mec == 0x01:
+                if len(data) >= 4:
+                    pi = int.from_bytes(data[2:4], "big")
+                elif len(data) >= 2:
+                    pi = int.from_bytes(data[:2], "big")
+                else:
+                    return
+                if pi != self._state.pi:
+                    self._tx.rds_set_pi(pi)
+                    self._state.pi = pi
+                    logger.info("UECP PI set: 0x%04X", pi)
+                self._last_payloads[mec] = group
+            elif mec == 0x07 and payload:
+                pty = int(payload[0]) & 0x1F
+                if pty != self._state.pty:
+                    self._tx.rds_set_pty(pty)
+                    self._state.pty = pty
+                    logger.info("UECP PTY set: %d", pty)
+                self._last_payloads[mec] = group
+            elif mec == 0x03 and payload:
+                tp = bool((payload[0] >> 1) & 1)
+                ta = bool(payload[0] & 1)
+                if tp != self._state.tp:
+                    self._tx.rds_set_tp(tp)
+                    self._state.tp = tp
+                    logger.info("UECP TP set: %s", tp)
+                if ta != self._state.ta:
+                    self._tx.rds_set_ta(ta)
+                    self._state.ta = ta
+                    logger.info("UECP TA set: %s", ta)
+                self._last_payloads[mec] = group
+            elif mec == 0x05 and payload:
+                ms = bool(payload[0] & 1)
+                if ms != self._state.ms:
+                    self._tx.rds_set_ms_music(ms)
+                    self._state.ms = ms
+                    logger.info("UECP MS set: %s", ms)
+                self._last_payloads[mec] = group
+            elif mec == 0x04 and payload:
+                flags = (
+                    bool(payload[0] & 0x01),
+                    bool(payload[0] & 0x02),
+                    bool(payload[0] & 0x04),
+                    bool(payload[0] & 0x08),
+                )
+                if flags != self._state.di:
+                    self._tx.rds_set_di(
+                        stereo=flags[0],
+                        artificial_head=flags[1],
+                        compressed=flags[2],
+                        dynamic_pty=flags[3],
+                    )
+                    self._state.di = flags
+                    logger.info(
+                        "UECP DI set: stereo=%s artificial=%s compressed=%s dynamic=%s",
+                        flags[0],
+                        flags[1],
+                        flags[2],
+                        flags[3],
+                    )
+                self._last_payloads[mec] = group
+            elif mec == 0x02:
+                # PS: data is the 8 PS chars (DSN/PSN are group[1]/group[2]);
+                # some encoders repeat DSN/PSN inside data (len >= 10).
+                ps_bytes = bytes(data[2:10]) if len(data) >= 10 else bytes(data[:8])
+                if len(ps_bytes) < 8:
+                    return
+                ps = _rds_decode(ps_bytes)
+                if ps != self._state.ps:
+                    self._tx.rds_set_ps(ps, 0)
+                    if not self._state.pscount_set:
+                        self._tx.rds_set_pscount(1, 1)
+                        self._state.pscount_set = True
+                    self._state.ps = ps
+                    if self._status_bus is not None:
+                        self._status_bus.update_ps([ps])
+                        self._status_bus.update_ps_current(ps.strip())
+                    logger.info("UECP PS set: %r", ps)
+                self._last_payloads[mec] = group
+            elif mec == 0x0A and len(data) >= 2:
+                # RT: MED = MEL(1) + control(1) + text (MEL covers control+text)
+                mel = data[0]
+                med = bytes(data[1 : 1 + min(mel, len(data) - 1)])
+                if not med:
+                    return
+                control = med[0]
+                raw = med[1:]
+                add_cr = False
+                cr_idx = raw.find(b"\r")
+                if cr_idx != -1:
+                    raw = raw[:cr_idx]
+                    add_cr = True
+                rt_text = _rds_decode(raw)
+                rt_text = rt_text[:32].rstrip()
+                bank = self._state.rt_bank or 0
+                if control & 0x01:
+                    bank ^= 1
+                if rt_text and (
+                    rt_text != self._state.rt or bank != self._state.rt_bank
+                ):
+                    self._tx.set_rt_ab_mode("bank")
+                    self._tx.rds_set_rt(rt_text, bank=bank, cr_terminate=add_cr)
+                    self._state.rt = rt_text
+                    self._state.rt_bank = bank
+                    if self._status_bus is not None:
+                        self._status_bus.update_rt(rt_text, bank)
+                    logger.info("UECP RT set (bank %d): %r", bank, rt_text)
+                self._last_payloads[mec] = group
+            elif mec == 0x13 and len(data) >= 5:
+                af_code: int | None = None
+                variant = data[0]
+                if variant in (0x05, 0x07, 0x0F):
+                    af_code = int(data[4])
+                if af_code is not None and af_code != self._state.af_code:
+                    self._tx.rds_set_af(af_code)
+                    self._state.af_code = af_code
+                    logger.info("UECP AF set: code=%d", af_code)
+                self._last_payloads[mec] = group
+            elif mec == 0x0D:
+                # Real time clock -> RDS CT (4A). No DSN/PSN: 8 MED bytes.
+                self._handle_rtc(group[1:9])
+                self._last_payloads[mec] = group
+            elif mec == 0x19 and len(group) >= 2:
+                self._handle_ct_onoff(group[1])
+                self._last_payloads[mec] = group
+            elif mec == 0x1E and len(group) >= 2:
+                self._handle_rds_onoff(group[1])
+                self._last_payloads[mec] = group
+            elif mec == 0x3E and len(data) >= 8:
+                self._handle_ptyn(data)
+                self._last_payloads[mec] = group
+            elif mec == 0x06 and len(data) >= 2:
+                self._handle_pin(data)
+                self._last_payloads[mec] = group
+            elif mec == 0x24 and len(group) >= 7:
+                self._handle_free_format(group)
+                self._last_payloads[mec] = group
+
+    def _handle_ptyn(self, data: bytes) -> None:
+        """MEC 0x3E: Programme Type Name -> two 10A groups via raw FIFO.
+
+        10A: block B bit0 = segment address, bit4 = A/B text-change flag;
+        blocks C/D carry 4 characters per segment (2 segments for 8 chars).
+        """
+        chars = bytes(data[:8]).ljust(8, b" ")
+        if chars == self._state.ptyn:
+            return
+        self._state.ptyn = chars
+        self._ptyn_ab ^= 1  # toggle A/B to flag the text change
+        ok = True
+        for seg in range(2):
+            c = chars[seg * 4 : seg * 4 + 4]
+            block3 = (c[0] << 8) | c[1]
+            block4 = (c[2] << 8) | c[3]
+            ok = (
+                self._tx.rds_send_group(10, (self._ptyn_ab << 4) | seg, block3, block4)
+                and ok
+            )
+        if ok:
+            logger.info("UECP PTYN set: %r", _rds_decode(chars))
+
+    def _handle_pin(self, data: bytes) -> None:
+        """MEC 0x06: Programme Item Number -> type 1A group.
+
+        EN 50067 fig. 15/note 3: PIN (day/hour/minute) goes in block 4;
+        block 3 (slow labelling) is zeroed (variant 0, no paging).
+        """
+        pin = (int(data[0]) << 8) | int(data[1])
+        if pin == self._state.pin:
+            return
+        self._state.pin = pin
+        if self._tx.rds_send_group(1, 0, 0x0000, pin):
+            day = (pin >> 11) & 0x1F
+            hour = (pin >> 6) & 0x1F
+            minute = pin & 0x3F
+            logger.info("UECP PIN set: day=%d %02d:%02d", day, hour, minute)
+
+    def _handle_free_format(self, group: bytes) -> None:
+        """MEC 0x24: free-format group -> stream verbatim via raw FIFO.
+
+        MED0: bits4..1 group type, bit0 version (0=A, 1=B).
+        MED1: bits4..0 block B low 5 bits (bits6-5 buffer config ignored).
+        MED2-5: blocks C and D. Block A (PI) is filled by the chip.
+        """
+        med = group[1:7]
+        group_type = (med[0] >> 1) & 0xF
+        version = med[0] & 0x01
+        low5 = med[1] & 0x1F
+        block3 = (med[2] << 8) | med[3]
+        block4 = (med[4] << 8) | med[5]
+        if self._tx.rds_send_group(group_type, low5, block3, block4, version=version):
+            logger.info(
+                "UECP free-format group %d%c sent", group_type, "B" if version else "A"
+            )
+
+    def _handle_rtc(self, med: bytes) -> None:
+        """MEC 0x0D: encoder real-time clock -> transmit CT group (4A).
+
+        MED: year, month, date, hour, minute, second, centisecond, offset.
+        CT is re-sent only when the minute changes (encoders re-send RTC
+        frequently; the offset byte 0xFF keeps the previous offset).
+        """
+        if len(med) < 8:
+            return
+        year = 2000 + med[0]
+        month, day, hour, minute = med[1], med[2], med[3], med[4]
+        if not (1 <= month <= 12 and 1 <= day <= 31 and hour <= 23 and minute <= 59):
+            return
+        if med[7] != 0xFF:
+            self._state.ct_offset = med[7] & 0x3F
+        offset_code = self._state.ct_offset
+        mjd = _mjd_from_ymd(year, month, day)
+        key = (mjd, hour, minute, offset_code)
+        if key == self._state.ct_key:
+            return
+        self._state.ct_key = key
+        if self._state.ct_enabled is False:
+            return
+        if self._tx.rds_send_ct(mjd, hour, minute, offset_code):
+            logger.info(
+                "UECP CT sent: %04d-%02d-%02d %02d:%02d UTC (offset 0x%02X)",
+                year,
+                month,
+                day,
+                hour,
+                minute,
+                offset_code,
+            )
+
+    def _handle_ct_onoff(self, med: int) -> None:
+        """MEC 0x19: enable/disable CT (type 4A) transmission."""
+        enabled = bool(med & 0x01)
+        if self._state.ct_enabled == enabled:
+            return
+        self._state.ct_enabled = enabled
+        logger.info("UECP CT %s", "enabled" if enabled else "disabled")
+        if enabled and self._state.ct_key is not None:
+            mjd, hour, minute, offset_code = self._state.ct_key
+            self._tx.rds_send_ct(mjd, hour, minute, offset_code)
+
+    def _handle_rds_onoff(self, med: int) -> None:
+        """MEC 0x1E: switch the RDS subcarrier on/off."""
+        on = bool(med & 0x01)
+        if self._state.rds_on == on:
+            return
+        self._state.rds_on = on
+        self._tx.rds_enable(on)
+        logger.info("UECP RDS %s", "on" if on else "off")
+
+
+# ---------------------------------------------------------------------
+# RT+ (RadioText Plus, IEC 62106-6 annex A)
+# ---------------------------------------------------------------------
+
+_RTPLUS_CONTENT_TYPES: list[str] = [
+    "dummy_class",
+    "item.title",
+    "item.album",
+    "item.tracknumber",
+    "item.artist",
+    "item.composition",
+    "item.movement",
+    "item.conductor",
+    "item.composer",
+    "item.band",
+    "item.comment",
+    "item.genre",
+    "info.news",
+    "info.news.local",
+    "info.stockmarket",
+    "info.sport",
+    "info.lottery",
+    "info.horoscope",
+    "info.daily_diversion",
+    "info.health",
+    "info.event",
+    "info.scene",
+    "info.cinema",
+    "info.tv",
+    "info.date_time",
+    "info.weather",
+    "info.traffic",
+    "info.alarm",
+    "info.advertisement",
+    "info.url",
+    "info.other",
+    "stationname.short",
+    "stationname.long",
+    "programme.now",
+    "programme.next",
+    "programme.part",
+    "programme.host",
+    "programme.editorial_staff",
+    "programme.frequency",
+    "programme.homepage",
+    "programme.subchannel",
+    "phone.hotline",
+    "phone.studio",
+    "phone.other",
+    "sms.studio",
+    "sms.other",
+    "email.hotline",
+    "email.studio",
+    "email.other",
+    "mms.other",
+    "chat",
+    "chat.centre",
+    "vote.question",
+    "vote.centre",
+    "unknown",
+    "unknown",
+    "unknown",
+    "place",
+    "appointment",
+    "identifier",
+    "purchase",
+    "get_data",
+]
+_RTPLUS_TYPE_CODES: dict[str, int] = {
+    name: idx for idx, name in enumerate(_RTPLUS_CONTENT_TYPES)
+}
+
+
+def _parse_rtplus_tags(value: Any) -> list[tuple[int, int, int]]:
+    """Parse up to 2 RT+ tags: [{type, start, length}, ...].
+
+    type: content-type name (e.g. 'item.artist') or class number 0-63.
+    start: 0-63, length: 1-63 characters.
+    """
+    tags: list[tuple[int, int, int]] = []
+    if not isinstance(value, list):
+        return tags
+    for item in value[:2]:
+        if not isinstance(item, dict):
+            continue
+        raw_type = item.get("type", item.get("content_type", 0))
+        if isinstance(raw_type, str):
+            ct = _RTPLUS_TYPE_CODES.get(raw_type.strip().lower())
+            if ct is None:
+                logger.warning("Unknown RT+ content type %r; skipped", raw_type)
+                continue
+        else:
+            ct = max(0, min(63, _parse_int(raw_type, 0)))
+        start = max(0, min(63, _parse_int(item.get("start", 0), 0)))
+        length = max(1, min(63, _parse_int(item.get("length", 1), 1)))
+        tags.append((ct, start, length))
+    return tags
+
+
+def _send_rt_plus(tx: SI4713, cfg: AppConfig) -> None:
+    """Send the RT+ 3A identification and the tag group for the current RT.
+
+    The item toggle bit flips on every new message (each burst is a new text).
+    """
+    if not cfg.rds_rt_plus_enabled or not cfg.rds_rt_plus_tags:
+        return
+    toggle = (getattr(tx, "_rtplus_toggle", 0) ^ 1) & 1
+    tx._rtplus_toggle = toggle  # type: ignore[attr-defined]
+    if tx.rds_send_rtplus_3a(cfg.rds_rt_plus_app_group):
+        tx.rds_send_rtplus_tags(
+            cfg.rds_rt_plus_app_group, toggle, 1, cfg.rds_rt_plus_tags
+        )
+        logger.info(
+            "RT+ sent (group %dA, toggle=%d): %s",
+            cfg.rds_rt_plus_app_group,
+            toggle,
+            [
+                (_RTPLUS_CONTENT_TYPES[ct], st, ln)
+                for ct, st, ln in cfg.rds_rt_plus_tags
+            ],
         )
 
 
@@ -951,9 +1651,9 @@ def apply_config(
     tx: SI4713,
     cfg: AppConfig,
     config_name: str,
-    status_bus: Optional["StatusBus"] = None,
+    status_bus: StatusBus | None = None,
     tx_enabled: bool = True,
-) -> Tuple[str, str, int, float, int, float, List[str]]:
+) -> tuple[str, str, int, float, int, float, list[str]]:
     """Apply a full config and return RT/PS rotation state."""
     # RF / audio
     cap_to_use = _effective_antenna_cap(cfg)
@@ -1014,9 +1714,7 @@ def apply_config(
     )
 
     # PS
-    macro_ctx = _macro_context(
-        config_name, freq_khz=cfg.frequency_khz, power=cfg.power
-    )
+    macro_ctx = _macro_context(config_name, freq_khz=cfg.frequency_khz, power=cfg.power)
     ps_slots, ps_rendered = _render_ps_slots(
         cfg.rds_ps, center=cfg.rds_ps_center, macro_ctx=macro_ctx
     )
@@ -1031,7 +1729,7 @@ def apply_config(
             status_bus.update_ps_current(ps_rendered[0].strip())
 
     # RT initial
-    rt_text: Optional[str] = _resolve_file_rt(cfg, macro_ctx)
+    rt_text: str | None = _resolve_file_rt(cfg, macro_ctx)
     source: str
     rot_idx = 0
     now = time.monotonic()
@@ -1054,6 +1752,7 @@ def apply_config(
         gap_ms=cfg.rds_rt_gap_ms,
         bank=cfg.rds_rt_bank,
         status_bus=status_bus,
+        cfg=cfg,
     )
     next_rotate_at = time.monotonic() + max(0.5, cfg.rds_rt_speed_s)
 
@@ -1066,7 +1765,7 @@ def reconfigure_live(
     old: AppConfig,
     new: AppConfig,
     config_name: str,
-    status_bus: Optional["StatusBus"] = None,
+    status_bus: StatusBus | None = None,
     tx_enabled: bool = True,
 ) -> bool:
     """Apply diffs and return True if RT should be re-burst."""
@@ -1192,7 +1891,7 @@ def recover_tx(tx: SI4713, cfg: AppConfig) -> bool:
     return False
 
 
-def _stop_player(proc: Optional[subprocess.Popen[bytes]]) -> None:
+def _stop_player(proc: subprocess.Popen[bytes] | None) -> None:
     """Terminate the audio player process if it is running."""
     if proc is None:
         return
@@ -1209,10 +1908,10 @@ def _stop_player(proc: Optional[subprocess.Popen[bytes]]) -> None:
 class AudioPlayerManager:
     """Manage the external audio player process with restart backoff."""
 
-    def __init__(self, adapter_cfg: Dict[str, Any]) -> None:
+    def __init__(self, adapter_cfg: dict[str, Any]) -> None:
         self._adapter_cfg = adapter_cfg
-        self._proc: Optional[subprocess.Popen[bytes]] = None
-        self._last_cfg: Tuple[Optional[bool], Optional[str]] = (None, None)
+        self._proc: subprocess.Popen[bytes] | None = None
+        self._last_cfg: tuple[bool | None, str | None] = (None, None)
         self._restart_backoff_s = 5.0
         self._next_restart_at = 0.0
 
@@ -1259,7 +1958,7 @@ class AudioPlayerManager:
         )
 
         cmd_str = ""
-        cmd_parts: List[str] = []
+        cmd_parts: list[str] = []
         try:
             # Quote device/URL so shlex.split keeps them together even when they contain spaces.
             url_safe = shlex.quote(cfg.audio_stream_url)
@@ -1296,7 +1995,9 @@ class AudioPlayerManager:
         if self._proc is not None:
             exit_code = self._proc.poll()
             if exit_code is not None:
-                logger.warning("Audio player exited (%s); scheduling restart", exit_code)
+                logger.warning(
+                    "Audio player exited (%s); scheduling restart", exit_code
+                )
                 self._proc = None
                 self._last_cfg = (None, None)
                 self._next_restart_at = now + self._restart_backoff_s
@@ -1330,7 +2031,7 @@ class TxStateMachine:
     tx: SI4713
     cfg: AppConfig
     player: AudioPlayerManager
-    status_bus: Optional["StatusBus"] = None
+    status_bus: StatusBus | None = None
     enabled: bool = True
     state: TxState = field(init=False)
 
@@ -1371,7 +2072,7 @@ def load_yaml_config(path: str) -> AppConfig:
     if not path.endswith(".json"):
         logger.critical("Only JSON configs are supported now.")
         raise SystemExit(2)
-    with open(path, "r", encoding="utf-8") as fh:
+    with open(path, encoding="utf-8") as fh:
         raw = json.load(fh)
     if not isinstance(raw, dict):
         logger.critical("Config root must be a mapping/dictionary")
@@ -1379,10 +2080,10 @@ def load_yaml_config(path: str) -> AppConfig:
     return AppConfig(raw)
 
 
-def load_state(path: str) -> Dict[str, Any]:
+def load_state(path: str) -> dict[str, Any]:
     """Load the persisted state file as a dict."""
     try:
-        with open(path, "r", encoding="utf-8") as fh:
+        with open(path, encoding="utf-8") as fh:
             return json.load(fh)
     except FileNotFoundError:
         return {}
@@ -1391,12 +2092,12 @@ def load_state(path: str) -> Dict[str, Any]:
         return {}
 
 
-def save_state(path: str, data: Dict[str, Any]) -> None:
+def save_state(path: str, data: dict[str, Any]) -> None:
     """Merge and persist state data to disk."""
-    payload: Dict[str, Any] = {}
+    payload: dict[str, Any] = {}
     try:
         if os.path.exists(path):
-            with open(path, "r", encoding="utf-8") as fh:
+            with open(path, encoding="utf-8") as fh:
                 existing = json.load(fh)
             if isinstance(existing, dict):
                 payload.update(existing)
@@ -1407,13 +2108,16 @@ def save_state(path: str, data: Dict[str, Any]) -> None:
         dir_name = os.path.dirname(path)
         if dir_name:
             os.makedirs(dir_name, exist_ok=True)
-        with open(path, "w", encoding="utf-8") as fh:
+        # Atomic write (tmp + replace) so concurrent writers can't corrupt the file
+        tmp = f"{path}.{os.getpid()}.tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
             json.dump(payload, fh, indent=2, sort_keys=True)
+        os.replace(tmp, path)
     except Exception as exc:  # noqa: BLE001
         logger.error("Failed to write state %s: %s", path, exc)
 
 
-def _first_config_from_dir(cfg_dir: str) -> Optional[str]:
+def _first_config_from_dir(cfg_dir: str) -> str | None:
     """Return the first config file found in a directory."""
     try:
         entries = sorted(
@@ -1430,9 +2134,9 @@ def _first_config_from_dir(cfg_dir: str) -> Optional[str]:
     return None
 
 
-def load_adapter_config(path: str) -> Dict[str, Any]:
+def load_adapter_config(path: str) -> dict[str, Any]:
     """Load adapter config from JSON or simple key/value text."""
-    defaults: Dict[str, Any] = {
+    defaults: dict[str, Any] = {
         "adapter": "ft232h",
         "ftdi_url": "ftdi://ftdi:232h/1",
         "ftdi_reset_pin": RESET_PIN,
@@ -1446,13 +2150,13 @@ def load_adapter_config(path: str) -> Dict[str, Any]:
         return defaults
     try:
         if path.lower().endswith(".json"):
-            with open(path, "r", encoding="utf-8") as fh:
+            with open(path, encoding="utf-8") as fh:
                 data = json.load(fh)
             if isinstance(data, dict):
                 defaults.update(data)
             return defaults
 
-        with open(path, "r", encoding="utf-8") as fh:
+        with open(path, encoding="utf-8") as fh:
             for line in fh:
                 raw = line.split("#", 1)[0].strip()
                 if not raw or ":" not in raw:
@@ -1461,10 +2165,8 @@ def load_adapter_config(path: str) -> Dict[str, Any]:
                 if not key:
                     continue
                 if re.fullmatch(r"-?\d+", val):
-                    try:
+                    with suppress(Exception):
                         val = int(val)
-                    except Exception:
-                        pass
                 defaults[key] = val
     except FileNotFoundError:
         logger.warning("Adapter config %s not found; using defaults", path)
@@ -1559,15 +2261,13 @@ def main() -> None:
         sig = getattr(signal, sig_name, None)
         if sig is None:
             continue
-        try:
+        with suppress(Exception):
             signal.signal(sig, _handle_stop)
-        except Exception:
-            pass
 
     adapter_cfg = load_adapter_config(args.adapter_config)
 
     state = load_state(STATE_PATH)
-    state_tx_enabled: Optional[bool] = None
+    state_tx_enabled: bool | None = None
     if isinstance(state, dict):
         raw_tx_enabled = state.get("tx_enabled")
         if isinstance(raw_tx_enabled, bool):
@@ -1607,12 +2307,10 @@ def main() -> None:
     cfg_name = os.path.splitext(os.path.basename(cfg_path))[0]
     macro_cache = MacroContextCache(cfg_name, cfg.frequency_khz, cfg.power)
     rt_macros_used = _rt_macros_possible(cfg)
-    live_reload_enabled = _parse_bool(
-        os.getenv("SI4713_LIVE_RELOAD", "0"), False
-    )
+    live_reload_enabled = _parse_bool(os.getenv("SI4713_LIVE_RELOAD", "0"), False)
 
-    status_bus: Optional["StatusBus"] = None
-    api_thread: Optional[threading.Thread] = None
+    status_bus: StatusBus | None = None
+    api_thread: threading.Thread | None = None
     backend = (
         args.backend
         or os.getenv("SI4713_BACKEND")
@@ -1642,6 +2340,8 @@ def main() -> None:
         args.api_port if args.api_port is not None else adapter_cfg.get("api_port")
     )
     api_host_arg = args.api_host or adapter_cfg.get("api_host")
+    # Explicit --api-port 0 is a hard disable: do not resurrect from state.
+    api_disabled = args.api_port == 0
 
     # Ensure Blinka is enabled automatically when requested
     if backend in {"ft232h_blinka", "blinka"}:
@@ -1652,7 +2352,7 @@ def main() -> None:
         api_port_arg = None
 
     # Resolve API settings from state if CLI not provided
-    if api_port_arg is None and isinstance(state, dict):
+    if api_port_arg is None and isinstance(state, dict) and not api_disabled:
         api_port_arg = state.get("api_port")
         if api_port_arg == 0:
             api_port_arg = None
@@ -1660,6 +2360,9 @@ def main() -> None:
         api_enabled = bool(state.get("api_enabled", False))
     else:
         api_enabled = api_port_arg is not None
+
+    if api_disabled:
+        api_enabled = False
 
     if api_enabled and api_port_arg:
         try:
@@ -1724,33 +2427,33 @@ def main() -> None:
             },
         )
 
-    last_rt: Optional[str]
+    last_rt: str | None
     rt_source: str
     rot_idx: int
     next_rotate_at: float
     ps_idx: int
     next_ps_rotate: float
-    last_ps_render: List[str] = []
+    last_ps_render: list[str] = []
     ps_macros_used = False
     next_ps_macro_refresh: float = float("inf")
     player = AudioPlayerManager(adapter_cfg)
-    file_mtime: Optional[float] = _get_mtime(cfg.rds_rt_file)
+    file_mtime: float | None = _get_mtime(cfg.rds_rt_file)
 
     def apply_new_config(
         new_cfg_path: str,
         tx_is_enabled: bool,
-    ) -> Tuple[
+    ) -> tuple[
         AppConfig,
         float,
         str,
         str,
         int,
         float,
-        Optional[float],
+        float | None,
         str,
         int,
         float,
-        List[str],
+        list[str],
         str,
     ]:
         new_cfg_path = os.path.abspath(new_cfg_path)
@@ -1793,9 +2496,9 @@ def main() -> None:
             uecp_bridge.start()
         uecp_sig = new_sig
 
-    tx_state: Optional[TxStateMachine] = None
-    uecp_bridge: Optional[UecpBridge] = None
-    uecp_sig: Tuple[bool, str, int] = (False, "", 0)
+    tx_state: TxStateMachine | None = None
+    uecp_bridge: UecpBridge | None = None
+    uecp_sig: tuple[bool, str, int] = (False, "", 0)
     try:
         if not tx.init(RESET_PIN, REFCLK_HZ):
             logger.error("Init failed")
@@ -1940,6 +2643,8 @@ def main() -> None:
                         next_rt_file_poll = now + rt_file_poll_s
                     except Exception as exc:  # noqa: BLE001
                         logger.error("Failed to switch config %s: %s", pending_cfg, exc)
+                        # Revert the requested path so we don't retry every loop
+                        status_bus.set_config_path(cfg_path)
 
             # Config reload requested via API (diff-only apply)
             if status_bus is not None and status_bus.pop_pending_reload():
@@ -1987,12 +2692,18 @@ def main() -> None:
                             candidate = candidate_file
                             new_src = "file"
                         else:
-                            candidate = _resolve_rotation_rt(cfg, rot_idx, macro_ctx) or ""
+                            candidate = (
+                                _resolve_rotation_rt(cfg, rot_idx, macro_ctx) or ""
+                            )
                             new_src = (
                                 f"list[{rot_idx}]" if cfg.rds_rt_texts else "fallback"
                             )
 
-                        if rt_dep_changed or candidate != last_rt or new_src != rt_source:
+                        if (
+                            rt_dep_changed
+                            or candidate != last_rt
+                            or new_src != rt_source
+                        ):
                             rt_source = new_src
                             last_rt = candidate or ""
                             rt_bank = cfg.rds_rt_bank
@@ -2006,6 +2717,7 @@ def main() -> None:
                                     gap_ms=cfg.rds_rt_gap_ms,
                                     bank=rt_bank,
                                     status_bus=status_bus,
+                                    cfg=cfg,
                                 )
                                 if status_bus is not None:
                                     status_bus.update_ps(cfg.rds_ps)
@@ -2019,7 +2731,9 @@ def main() -> None:
                                     candidate,
                                 )
                     next_cfg_poll = (
-                        time.monotonic() + cfg_poll_s if live_reload_enabled else float("inf")
+                        time.monotonic() + cfg_poll_s
+                        if live_reload_enabled
+                        else float("inf")
                     )
                 except Exception as exc:  # noqa: BLE001
                     logger.error("Failed to reload config: %s", exc)
@@ -2054,11 +2768,7 @@ def main() -> None:
 
             # Health/ASQ monitoring runs on its own interval (cfg.health_interval_s).
             if now >= next_monitor_tick:
-                if (
-                    cfg.monitor_health
-                    and tx_state is not None
-                    and tx_state.enabled
-                ):
+                if cfg.monitor_health and tx_state is not None and tx_state.enabled:
                     status = tx.tx_status()
                     if status is None:
                         health_failures += 1
@@ -2081,7 +2791,7 @@ def main() -> None:
                 else:
                     health_failures = 0
 
-                if cfg.monitor_asq:
+                if cfg.monitor_asq and tx_state is not None and tx_state.enabled:
                     overmod, inlvl = tx.read_asq()
                     if (
                         overmod
@@ -2187,6 +2897,7 @@ def main() -> None:
                                     gap_ms=cfg.rds_rt_gap_ms,
                                     bank=cfg.rds_rt_bank,
                                     status_bus=status_bus,
+                                    cfg=cfg,
                                 )
                                 logger.info(
                                     "RT applied on config reload: %s -> %s: %r",
@@ -2209,7 +2920,11 @@ def main() -> None:
             if not cfg.uecp_enabled and now >= next_rt_file_poll:
                 current_mtime = _get_mtime(cfg.rds_rt_file) if cfg.rds_rt_file else None
 
-                if cfg.rds_rt_file and current_mtime is not None and current_mtime != file_mtime:
+                if (
+                    cfg.rds_rt_file
+                    and current_mtime is not None
+                    and current_mtime != file_mtime
+                ):
                     candidate = _resolve_file_rt(cfg, macro_ctx)
                     if candidate is not None:
                         if candidate != last_rt or rt_source != "file":
@@ -2222,6 +2937,7 @@ def main() -> None:
                                 gap_ms=cfg.rds_rt_gap_ms,
                                 bank=cfg.rds_rt_bank,
                                 status_bus=status_bus,
+                                cfg=cfg,
                             )
                         logger.info("RT source switch: %s -> file", rt_source)
                         rt_source = "file"
@@ -2239,6 +2955,7 @@ def main() -> None:
                                 gap_ms=cfg.rds_rt_gap_ms,
                                 bank=cfg.rds_rt_bank,
                                 status_bus=status_bus,
+                                cfg=cfg,
                             )
                             new_src = (
                                 f"list[{rot_idx}]" if cfg.rds_rt_texts else "fallback"
@@ -2260,6 +2977,7 @@ def main() -> None:
                             gap_ms=cfg.rds_rt_gap_ms,
                             bank=cfg.rds_rt_bank,
                             status_bus=status_bus,
+                            cfg=cfg,
                         )
                         new_src = f"list[{rot_idx}]" if cfg.rds_rt_texts else "fallback"
                         logger.info("RT source switch: file -> %s", new_src)
@@ -2289,6 +3007,7 @@ def main() -> None:
                         gap_ms=cfg.rds_rt_gap_ms,
                         bank=cfg.rds_rt_bank,
                         status_bus=status_bus,
+                        cfg=cfg,
                     )
                     logger.info("RT rotate -> list[%d]: %r", rot_idx, candidate)
                     rt_source = f"list[{rot_idx}]"
@@ -2307,11 +3026,12 @@ def main() -> None:
                 if ps_macros_used:
                     ps_txt = _apply_macros(ps_txt, macro_ctx)
                 ps_text8 = (
-                    _center_fixed(ps_txt, 8) if cfg.rds_ps_center else ps_txt[:8].ljust(8)
+                    _center_fixed(ps_txt, 8)
+                    if cfg.rds_ps_center
+                    else ps_txt[:8].ljust(8)
                 )
                 tx.rds_set_ps(ps_text8, 0)
                 tx.rds_set_pscount(1, max(1, int(round(cfg.rds_ps_speed))))
-                last_ps_render = [ps_text8]
                 if status_bus is not None:
                     status_bus.update_ps_current(ps_text8.strip())
                 logger.info("PS rotate -> list[%d]: %s", ps_idx, ps_text8.strip())
@@ -2331,10 +3051,8 @@ def main() -> None:
                 else float("inf"),
             )
             sleep_s = max(0.05, min(loop_max_sleep_s, next_due - now))
-            try:
+            with suppress(InterruptedError):
                 time.sleep(sleep_s)
-            except InterruptedError:
-                pass
 
     except KeyboardInterrupt:
         logger.info("Stopped by user")

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""
-SI4713 FM Transmitter Control Library
-Based on work by PE5PVB (https://github.com/PE5PVB/si4713)
+"""SI4713 FM Transmitter Control Library.
+
+Based on work by PE5PVB (https://github.com/PE5PVB/si4713).
 """
 
 from __future__ import annotations
@@ -10,7 +10,14 @@ import logging
 import os
 import threading
 import time
-from typing import Any, List, Optional, Tuple
+from contextlib import suppress
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    # Optional backends, imported lazily only when that backend is selected.
+    import busio  # type: ignore[import-not-found]
+    import digitalio  # type: ignore[import-not-found]
+    import pyftdi.i2c  # type: ignore[import-not-found]
 
 # RPi backend (default on Raspberry Pi)
 try:
@@ -25,6 +32,8 @@ except Exception:  # noqa: BLE001
 
 logger = logging.getLogger(__name__)
 
+from .charset import encode as _rds_encode  # noqa: E402
+
 I2C_ADDRESS: int = 0x63
 I2C_BUS: int = 1
 
@@ -37,21 +46,17 @@ I2C_BUS: int = 1
 class _Ft232hBus:
     """Minimal SMBus-like wrapper around pyftdi's I2C port."""
 
-    def __init__(self, port: "pyftdi.i2c.I2cPort") -> None:  # type: ignore[name-defined]
+    def __init__(self, port: pyftdi.i2c.I2cPort) -> None:  # type: ignore[name-defined]
         self._port = port
 
-    def write_i2c_block_data(
-        self, addr: int, cmd: int, data: List[int]
-    ) -> None:  # noqa: ARG002
+    def write_i2c_block_data(self, addr: int, cmd: int, data: list[int]) -> None:  # noqa: ARG002
         payload = bytes([cmd, *data])
         self._port.write(payload)
 
     def read_byte(self, addr: int) -> int:  # noqa: ARG002
         return int(self._port.read(1)[0])
 
-    def read_i2c_block_data(
-        self, addr: int, cmd: int, length: int
-    ) -> List[int]:  # noqa: ARG002
+    def read_i2c_block_data(self, addr: int, cmd: int, length: int) -> list[int]:  # noqa: ARG002
         self._port.write(bytes([cmd]))
         data = self._port.read(length)
         return list(data)
@@ -69,7 +74,7 @@ class _Ft232hGpio:
     HIGH = 1
     LOW = 0
 
-    def __init__(self, ctrl: "pyftdi.i2c.I2cController", pin: int) -> None:  # type: ignore[name-defined]
+    def __init__(self, ctrl: pyftdi.i2c.I2cController, pin: int) -> None:  # type: ignore[name-defined]
         self._pin = pin
         self._mask = 1 << pin
         self._gpio = ctrl.get_gpio()
@@ -102,10 +107,9 @@ class _Ft232hGpio:
         self._gpio.write(self._state)
 
     def cleanup(self) -> None:
-        try:
+        """Release the reset pin (drive it low, ignore errors)."""
+        with suppress(Exception):
             self._gpio.write(self._state & ~self._mask)
-        except Exception:
-            pass
 
 
 class _Ft232hBackend:
@@ -140,7 +144,7 @@ class _Ft232hBackend:
 class _BlinkaBus:
     """SMBus-like shim using Adafruit Blinka busio.I2C."""
 
-    def __init__(self, i2c: "busio.I2C") -> None:  # type: ignore[name-defined]
+    def __init__(self, i2c: busio.I2C) -> None:  # type: ignore[name-defined]
         self._i2c = i2c
         self._locked = False
         self._ensure_lock()
@@ -156,7 +160,7 @@ class _BlinkaBus:
             time.sleep(0.001)
         raise RuntimeError("Failed to lock I2C bus (Blinka)")
 
-    def write_i2c_block_data(self, addr: int, cmd: int, data: List[int]) -> None:
+    def write_i2c_block_data(self, addr: int, cmd: int, data: list[int]) -> None:
         self._ensure_lock()
         self._i2c.writeto(addr, bytes([cmd, *data]))
 
@@ -166,7 +170,7 @@ class _BlinkaBus:
         self._i2c.readfrom_into(addr, buf)
         return int(buf[0])
 
-    def read_i2c_block_data(self, addr: int, cmd: int, length: int) -> List[int]:
+    def read_i2c_block_data(self, addr: int, cmd: int, length: int) -> list[int]:
         self._ensure_lock()
         buf = bytearray(length)
         self._i2c.writeto_then_readfrom(addr, bytes([cmd]), buf)
@@ -179,10 +183,8 @@ class _BlinkaBus:
         finally:
             self._locked = False
             if hasattr(self._i2c, "deinit"):
-                try:
+                with suppress(Exception):
                     self._i2c.deinit()  # type: ignore[attr-defined]
-                except Exception:
-                    pass
 
 
 class _BlinkaGpio:
@@ -193,7 +195,7 @@ class _BlinkaGpio:
     HIGH = 1
     LOW = 0
 
-    def __init__(self, pin: "digitalio.DigitalInOut") -> None:  # type: ignore[name-defined]
+    def __init__(self, pin: digitalio.DigitalInOut) -> None:  # type: ignore[name-defined]
         from digitalio import Direction  # type: ignore import  # noqa: WPS433
 
         self._pin = pin
@@ -244,13 +246,12 @@ class _BlinkaBackend:
         self.gpio = _BlinkaGpio(digitalio.DigitalInOut(reset_pin_obj))
 
     def close(self) -> None:
+        """Close the I2C bus and clean up GPIO (best effort)."""
         try:
             self.bus.close()
         finally:
-            try:
+            with suppress(Exception):
                 self.gpio.cleanup()
-            except Exception:
-                pass
 
 
 class SI4713:
@@ -261,16 +262,16 @@ class SI4713:
         i2c_addr: int = I2C_ADDRESS,
         i2c_bus: int = I2C_BUS,
         backend: str = "auto",
-        ftdi_url: Optional[str] = None,
+        ftdi_url: str | None = None,
         ftdi_reset_pin: int = 5,
     ) -> None:
         backend = (backend or "auto").lower()
         self.addr: int = i2c_addr
         self.backend: str = backend
-        self._stop_event: Optional[threading.Event] = None
+        self._stop_event: threading.Event | None = None
 
-        self._ftdi_backend: Optional[_Ft232hBackend] = None
-        self._blinka_backend: Optional[_BlinkaBackend] = None
+        self._ftdi_backend: _Ft232hBackend | None = None
+        self._blinka_backend: _BlinkaBackend | None = None
         self.bus: Any = None
         self.gpio: Any = None
 
@@ -330,29 +331,33 @@ class SI4713:
                         "SI4713 backend: FT232H (%s), reset pin=%d", url, reset_pin
                     )
 
-        self.lock: threading.Lock = threading.Lock()
-        self.buf: List[int] = [0] * 10
+        # RLock: public methods hold it across compose+write so concurrent
+        # callers (main loop, UECP threads) cannot interleave commands.
+        self.lock: threading.RLock = threading.RLock()
+        self._stop_event: threading.Event | None = None
 
         self.component: int = 0
         self.acomp: int = 0
         self.misc: int = 0
 
         self._prop_cache: dict[int, int] = {}
-        self._last_freq_10khz: Optional[int] = None
-        self._last_output: Optional[Tuple[int, int]] = None
+        self._last_freq_10khz: int | None = None
+        self._last_output: tuple[int, int] | None = None
         self._last_ps: dict[int, str] = {}
         self._rt_ab_mode: str = "auto"  # 'legacy' | 'auto' | 'bank'
         self._rt_ab: int = 1  # 0=A, 1=B
-        self._last_rt: Optional[bytes] = None  # last 32-byte payload
-        self._last_rt_bank: Optional[int] = None
+        self._last_rt: bytes | None = None  # last 32-byte payload
+        self._last_rt_bank: int | None = None
 
-    def set_stop_event(self, event: Optional[threading.Event]) -> None:
+    def set_stop_event(self, event: threading.Event | None) -> None:
+        """Attach a stop event that aborts pending I2C transfers."""
         self._stop_event = event
 
     def _should_stop(self) -> bool:
         return bool(self._stop_event and self._stop_event.is_set())
 
     def init(self, rst_pin: int, refclk_hz: int) -> bool:
+        """Hardware-reset and initialize the SI4713; return True on success."""
         try:
             self._prop_cache.clear()
             self._last_freq_10khz = None
@@ -364,7 +369,7 @@ class SI4713:
             if "lock" not in self.__dict__ or self.lock is None:
                 import threading
 
-                self.lock = threading.Lock()
+                self.lock = threading.RLock()
 
             self.gpio.setwarnings(False)
             self.gpio.setmode(self.gpio.BCM)
@@ -381,9 +386,7 @@ class SI4713:
             with self.lock:
                 self.bus.write_i2c_block_data(self.addr, 0x01, [0x12, 0x50])
 
-            self.buf[0] = 0x80
-            self.buf[1] = 0x0E
-            if not self._write_buf(2):
+            if not self._write_buf([0x80, 0x0E]):
                 logger.error("GPO_CTL write failed")
                 return False
 
@@ -404,16 +407,19 @@ class SI4713:
 
     # ---------- Low-level helpers ----------
 
-    def _write_buf(self, nbytes: int) -> bool:
+    def _write_buf(self, data: list[int]) -> bool:
+        """Send a command (data[0]=cmd, rest=payload).
+
+        Callers pass a local buffer so command composition is race-free
+        across threads.
+        """
         retries = 3
         for attempt in range(1, retries + 1):
             if self._should_stop():
                 return False
             try:
                 with self.lock:
-                    self.bus.write_i2c_block_data(
-                        self.addr, self.buf[0], self.buf[1:nbytes]
-                    )
+                    self.bus.write_i2c_block_data(self.addr, data[0], data[1:])
                     time.sleep(0.06)
                     for _ in range(50):
                         if self._should_stop():
@@ -422,8 +428,11 @@ class SI4713:
                         if status & 0x80:
                             return True
                         time.sleep(0.002)
-                    logger.error("CTS timeout after write")
-                    return False
+                    logger.warning(
+                        "CTS timeout after write (attempt %d/%d)", attempt, retries
+                    )
+                    time.sleep(0.01 * attempt)
+                    continue
             except Exception as exc:  # noqa: BLE001
                 if self._should_stop():
                     return False
@@ -434,23 +443,28 @@ class SI4713:
         return False
 
     def _set_prop(self, prop: int, val: int) -> bool:
-        cached = self._prop_cache.get(prop)
-        if cached is not None and cached == val:
-            return True
-        self.buf[0] = 0x12
-        self.buf[1] = 0x00
-        self.buf[2] = (prop >> 8) & 0xFF
-        self.buf[3] = prop & 0xFF
-        self.buf[4] = (val >> 8) & 0xFF
-        self.buf[5] = val & 0xFF
-        ok = self._write_buf(6)
-        if ok:
-            self._prop_cache[prop] = val
-        return ok
+        with self.lock:
+            cached = self._prop_cache.get(prop)
+            if cached is not None and cached == val:
+                return True
+            ok = self._write_buf(
+                [
+                    0x12,
+                    0x00,
+                    (prop >> 8) & 0xFF,
+                    prop & 0xFF,
+                    (val >> 8) & 0xFF,
+                    val & 0xFF,
+                ]
+            )
+            if ok:
+                self._prop_cache[prop] = val
+            return ok
 
     # ---------- Public control API ----------
 
     def hw_reset(self, rst_pin: int) -> None:
+        """Assert the hardware reset line (stops TX) and clear cached state."""
         try:
             self.gpio.output(rst_pin, self.gpio.LOW)
             time.sleep(0.05)
@@ -467,50 +481,49 @@ class SI4713:
             self._last_ps.clear()
 
     def set_frequency_10khz(self, f10k: int) -> None:
+        """Tune the transmitter; frequency in 10 kHz units."""
         if self._last_freq_10khz == f10k:
             return
-        self.buf[0] = 0x30
-        self.buf[1] = 0x00
-        self.buf[2] = (f10k >> 8) & 0xFF
-        self.buf[3] = f10k & 0xFF
-        if not self._write_buf(4):
+        cmd = [0x30, 0x00, (f10k >> 8) & 0xFF, f10k & 0xFF]
+        if not self._write_buf(cmd):
             if self._should_stop():
                 return
             time.sleep(0.01)
-            if not self._write_buf(4):
+            if not self._write_buf(cmd):
                 return
         self._last_freq_10khz = f10k
 
     def set_output(self, level: int, cap: int) -> None:
+        """Set output power level (dBuV) and antenna capacitor (0 = auto)."""
         level = max(0, min(255, level))
         cap = max(0, min(255, cap))
         if self._last_output == (level, cap):
             return
-        self.buf[0] = 0x31
-        self.buf[1] = 0x00
-        self.buf[2] = 0x00
-        self.buf[3] = level
-        self.buf[4] = cap
-        if not self._write_buf(5):
+        cmd = [0x31, 0x00, 0x00, level, cap]
+        if not self._write_buf(cmd):
             if self._should_stop():
                 return
             time.sleep(0.01)
-            if not self._write_buf(5):
+            if not self._write_buf(cmd):
                 return
         self._last_output = (level, cap)
 
     def enable_mpx(self, on: bool) -> None:
-        if on:
-            self.component |= 0x03
-        else:
-            self.component &= ~0x03
-        self._set_prop(0x2100, self.component)
+        """Enable or disable the MPX (pilot/stereo/RDS) output stage."""
+        with self.lock:
+            if on:
+                self.component |= 0x03
+            else:
+                self.component &= ~0x03
+            self._set_prop(0x2100, self.component)
 
     def set_pilot(self, freq_hz: int, dev_hz: int) -> None:
+        """Set pilot frequency and deviation (19 kHz / 6.75 kHz typical)."""
         self._set_prop(0x2107, freq_hz)
         self._set_prop(0x2102, dev_hz)
 
     def set_audio(self, deviation_hz: int, mute: bool, preemph_us: int) -> None:
+        """Configure audio deviation, mute and pre-emphasis (0/50/75 us)."""
         self._set_prop(0x2101, deviation_hz)
         self._set_prop(0x2105, 0x0003 if mute else 0x0000)
         if preemph_us == 0:
@@ -530,15 +543,17 @@ class SI4713:
         comp_gain: int,
         lim_rel: int,
     ) -> None:
-        if agc_on:
-            self.acomp |= 1
-        else:
-            self.acomp &= ~1
-        if limiter_on:
-            self.acomp |= 1 << 1
-        else:
-            self.acomp &= ~(1 << 1)
-        self._set_prop(0x2200, self.acomp)
+        """Configure AGC/limiter audio processing blocks."""
+        with self.lock:
+            if agc_on:
+                self.acomp |= 1
+            else:
+                self.acomp &= ~1
+            if limiter_on:
+                self.acomp |= 1 << 1
+            else:
+                self.acomp &= ~(1 << 1)
+            self._set_prop(0x2200, self.acomp)
         self._set_prop(0x2201, comp_thr & 0xFFFF)
         self._set_prop(0x2202, comp_att)
         self._set_prop(0x2203, comp_rel)
@@ -548,73 +563,93 @@ class SI4713:
     # ---------- RDS controls ----------
 
     def rds_enable(self, on: bool) -> None:
-        if on:
-            self.component |= 1 << 2
-        else:
-            self.component &= ~(1 << 2)
-        self._set_prop(0x2100, self.component)
+        """Enable or disable the RDS subcarrier."""
+        with self.lock:
+            if on:
+                self.component |= 1 << 2
+            else:
+                self.component &= ~(1 << 2)
+            self._set_prop(0x2100, self.component)
 
     def rds_set_pi(self, pi: int) -> None:
+        """Set the RDS Programme Identification (PI) code."""
         self._set_prop(0x2C01, pi)
 
     def rds_set_pty(self, pty: int) -> None:
-        self.misc = (self.misc & 0xFC1F) | ((pty & 0x1F) << 5)
-        self._set_prop(0x2C03, self.misc)
+        """Set the RDS Programme Type (PTY) code (0-31)."""
+        with self.lock:
+            self.misc = (self.misc & 0xFC1F) | ((pty & 0x1F) << 5)
+            self._set_prop(0x2C03, self.misc)
 
     def rds_set_tp(self, on: bool) -> None:
-        if on:
-            self.misc |= 1 << 10
-        else:
-            self.misc &= ~(1 << 10)
-        self._set_prop(0x2C03, self.misc)
+        """Set the Traffic Programme (TP) flag."""
+        with self.lock:
+            if on:
+                self.misc |= 1 << 10
+            else:
+                self.misc &= ~(1 << 10)
+            self._set_prop(0x2C03, self.misc)
 
     def rds_set_ta(self, on: bool) -> None:
-        if on:
-            self.misc |= 1 << 4
-        else:
-            self.misc &= ~(1 << 4)
-        self._set_prop(0x2C03, self.misc)
+        """Set the Traffic Announcement (TA) flag."""
+        with self.lock:
+            if on:
+                self.misc |= 1 << 4
+            else:
+                self.misc &= ~(1 << 4)
+            self._set_prop(0x2C03, self.misc)
 
     def rds_set_ms_music(self, on: bool) -> None:
-        if on:
-            self.misc |= 1 << 3
-        else:
-            self.misc &= ~(1 << 3)
-        self._set_prop(0x2C03, self.misc)
+        """Set the Music/Speech flag (True = music)."""
+        with self.lock:
+            if on:
+                self.misc |= 1 << 3
+            else:
+                self.misc &= ~(1 << 3)
+            self._set_prop(0x2C03, self.misc)
 
     def rds_set_di(
         self,
-        stereo: Optional[bool] = None,
-        artificial_head: Optional[bool] = None,
-        compressed: Optional[bool] = None,
-        dynamic_pty: Optional[bool] = None,
+        stereo: bool | None = None,
+        artificial_head: bool | None = None,
+        compressed: bool | None = None,
+        dynamic_pty: bool | None = None,
     ) -> None:
-        if dynamic_pty is not None:
-            self.misc = (
-                (self.misc | (1 << 12)) if dynamic_pty else (self.misc & ~(1 << 12))
-            )
-        if compressed is not None:
-            self.misc = (
-                (self.misc | (1 << 13)) if compressed else (self.misc & ~(1 << 13))
-            )
-        if artificial_head is not None:
-            self.misc = (
-                (self.misc | (1 << 14)) if artificial_head else (self.misc & ~(1 << 14))
-            )
-        if stereo is not None:
-            self.misc = (self.misc | (1 << 15)) if stereo else (self.misc & ~(1 << 15))
-        self._set_prop(0x2C03, self.misc)
+        """Set Decoder Information bits; None leaves a bit unchanged."""
+        with self.lock:
+            if dynamic_pty is not None:
+                self.misc = (
+                    (self.misc | (1 << 12)) if dynamic_pty else (self.misc & ~(1 << 12))
+                )
+            if compressed is not None:
+                self.misc = (
+                    (self.misc | (1 << 13)) if compressed else (self.misc & ~(1 << 13))
+                )
+            if artificial_head is not None:
+                self.misc = (
+                    (self.misc | (1 << 14))
+                    if artificial_head
+                    else (self.misc & ~(1 << 14))
+                )
+            if stereo is not None:
+                self.misc = (
+                    (self.misc | (1 << 15)) if stereo else (self.misc & ~(1 << 15))
+                )
+            self._set_prop(0x2C03, self.misc)
 
     def rds_set_deviation(self, dev_10hz: int) -> None:
+        """Set RDS deviation in 10 Hz units (e.g. 200 = 2.00 kHz)."""
         self._set_prop(0x2103, dev_10hz)
 
     def rds_set_af(self, af_code: int) -> None:
+        """Set the alternative-frequency code (0 clears the AF)."""
         if af_code == 0:
             self._set_prop(0x2C06, 0xE0E0)
         else:
             self._set_prop(0x2C06, 0xDD95 + af_code)
 
     def rds_set_ps(self, text: str, slot: int) -> None:
+        """Write an 8-character PS name to a PS slot (skipped if unchanged)."""
         prev = self._last_ps.get(slot)
         if prev == text:
             return
@@ -623,25 +658,18 @@ class SI4713:
             arr[i] = text[i]
         group = slot * 2
 
-        self.buf[0] = 0x36
-        self.buf[1] = group
-        self.buf[2:6] = list(map(ord, arr[0:4]))
-        self._write_buf(6)
-
-        self.buf[0] = 0x36
-        self.buf[1] = group + 1
-        self.buf[2:6] = list(map(ord, arr[4:8]))
-        self._write_buf(6)
+        with self.lock:
+            self._write_buf([0x36, group] + _rds_encode("".join(arr[0:4])))
+            self._write_buf([0x36, group + 1] + _rds_encode("".join(arr[4:8])))
         self._last_ps[slot] = text
 
     def rds_set_pscount(self, count: int, speed: int) -> None:
+        """Set the PS message count and repeat count properties."""
         self._set_prop(0x2C05, count)
         self._set_prop(0x2C04, speed)
 
     def set_rt_ab_mode(self, mode: str) -> None:
-        """
-        Set RT A/B behaviour: 'legacy' | 'auto' | 'bank'.
-        """
+        """Set RT A/B behaviour: 'legacy' | 'auto' | 'bank'."""
         m = (mode or "").strip().lower()
         if m not in ("legacy", "auto", "bank"):
             raise ValueError("rt_ab_mode must be 'legacy', 'auto', or 'bank'")
@@ -650,13 +678,12 @@ class SI4713:
     def rds_set_rt(
         self,
         text: str,
-        bank: Optional[int] = None,
+        bank: int | None = None,
         *,
         force_new_message: bool = False,
         cr_terminate: bool = True,
     ) -> int:
-        """
-        Send RadioText using Group 2A (32 chars here) with UECP-like A/B rules.
+        """Send RadioText using Group 2A (32 chars here) with UECP-like A/B rules.
 
         Modes:
         - 'legacy': always bank A.
@@ -674,12 +701,11 @@ class SI4713:
         ln = min(32, len(text))
         for i in range(ln):
             arr[i] = text[i]
-        if cr_terminate and ln < 32:
-            # put a single CR at the first free position (if not already CR)
-            if ln == 0 or arr[ln - 1] != "\r":
-                arr[ln] = "\r"
+        # put a single CR at the first free position (if not already CR)
+        if cr_terminate and ln < 32 and (ln == 0 or arr[ln - 1] != "\r"):
+            arr[ln] = "\r"
 
-        payload = "".join(arr).encode("latin-1", "replace")
+        payload = bytes(_rds_encode("".join(arr)))
 
         # ---- Decide bank per mode
         mode = self._rt_ab_mode
@@ -710,42 +736,129 @@ class SI4713:
         # A new text starts at segment 0; we always send a complete set, then repeat
         # (reliability per spec: send at least twice overall). :contentReference[oaicite:2]{index=2}
         idx = 0
-        for seg in range(8):
-            block_b = (
-                (2 << 12)  # group type code = 2
-                | (0 << 11)  # version A
-                | (tp << 10)
-                | (pty << 5)
-                | (ab << 4)  # Text A/B flag
-                | (seg & 0x0F)  # segment address
-            )
-            self.buf[0] = 0x35
-            # reset/load first, then continue
-            self.buf[1] = 0x06 if seg == 0 else 0x04
-            self.buf[2] = (block_b >> 8) & 0xFF
-            self.buf[3] = block_b & 0xFF
-            self.buf[4] = ord(arr[idx])
-            self.buf[5] = ord(arr[idx + 1])
-            self.buf[6] = ord(arr[idx + 2])
-            self.buf[7] = ord(arr[idx + 3])
-            self._write_buf(8)
-            idx += 4
+        with self.lock:
+            for seg in range(8):
+                block_b = (
+                    (2 << 12)  # group type code = 2
+                    | (0 << 11)  # version A
+                    | (tp << 10)
+                    | (pty << 5)
+                    | (ab << 4)  # Text A/B flag
+                    | (seg & 0x0F)  # segment address
+                )
+                cmd = [
+                    0x35,
+                    # reset/load first, then continue
+                    0x06 if seg == 0 else 0x04,
+                    (block_b >> 8) & 0xFF,
+                    block_b & 0xFF,
+                    payload[idx],
+                    payload[idx + 1],
+                    payload[idx + 2],
+                    payload[idx + 3],
+                ]
+                self._write_buf(cmd)
+                idx += 4
 
         self._last_rt = payload
         self._last_rt_bank = bank_to_send
         return bank_to_send
 
+    def rds_send_group(
+        self,
+        group_type: int,
+        block2_low: int,
+        block3: int,
+        block4: int,
+        version: int = 0,
+    ) -> bool:
+        """Send one raw RDS group via the TX_RDS FIFO (command 0x35).
+
+        group_type: 0-15, version: 0=A, 1=B.
+        block2_low: low 5 bits of block B (group-specific; TP/PTY are filled
+        from the current misc state). block3/block4: full 16-bit blocks.
+        """
+        tp = (self.misc >> 10) & 0x01
+        pty = (self.misc >> 5) & 0x1F
+        block_b = (
+            ((group_type & 0xF) << 12)
+            | ((version & 0x01) << 11)
+            | (tp << 10)
+            | (pty << 5)
+            | (block2_low & 0x1F)
+        )
+        with self.lock:
+            return self._write_buf(
+                [
+                    0x35,
+                    0x06,  # reset FIFO + write
+                    (block_b >> 8) & 0xFF,
+                    block_b & 0xFF,
+                    (block3 >> 8) & 0xFF,
+                    block3 & 0xFF,
+                    (block4 >> 8) & 0xFF,
+                    block4 & 0xFF,
+                ]
+            )
+
+    def rds_send_rtplus_3a(self, app_group_type: int) -> bool:
+        """Send the RT+ ODA identification group (type 3A, AID 0x4BD7).
+
+        app_group_type: group type number (1-15) that carries the RT+ tags.
+        """
+        return self.rds_send_group(3, (app_group_type & 0xF) << 1, 0x0000, 0x4BD7)
+
+    def rds_send_rtplus_tags(
+        self,
+        app_group_type: int,
+        item_toggle: int,
+        item_running: int,
+        tags: list[tuple[int, int, int]],
+    ) -> bool:
+        """Send one RT+ tag group (IEC 62106-6 annex A).
+
+        tags: up to 2 tuples of (content_type 0-63, start 0-63, length 1-63).
+        Block B: bit4=item toggle, bit3=item running, bits2-0=content type 1
+        top bits. Tags are packed across blocks C and D.
+        """
+        ct1, st1, ln1 = tags[0] if len(tags) > 0 else (0, 0, 1)
+        ct2, st2, ln2 = tags[1] if len(tags) > 1 else (0, 0, 1)
+        block2_low = (
+            ((item_toggle & 0x01) << 4)
+            | ((item_running & 0x01) << 3)
+            | ((ct1 >> 3) & 0x07)
+        )
+        block3 = (
+            ((ct1 & 0x07) << 13)
+            | ((st1 & 0x3F) << 7)
+            | (((ln1 - 1) & 0x3F) << 1)
+            | ((ct2 >> 5) & 0x01)
+        )
+        block4 = ((ct2 & 0x1F) << 11) | ((st2 & 0x3F) << 5) | ((ln2 - 1) & 0x1F)
+        return self.rds_send_group(app_group_type, block2_low, block3, block4)
+
+    def rds_send_ct(self, mjd: int, hour: int, minute: int, offset_code: int) -> bool:
+        """Send one Clock-Time group (type 4A) via the raw RDS FIFO.
+
+        mjd: Modified Julian Date (17 bits), hour/minute: UTC,
+        offset_code: RDS local-time offset (bit5=sign, bits0-4=half-hours).
+        """
+        block_c = (
+            (((mjd >> 7) & 0xFF) << 8) | ((hour & 0x1F) << 3) | ((mjd >> 4) & 0x07)
+        )
+        block_d = ((mjd & 0x0F) << 12) | ((minute & 0x3F) << 6) | (offset_code & 0x3F)
+        return self.rds_send_group(4, (mjd >> 15) & 0x03, block_c, block_d)
+
     # ---------- Status / health ----------
 
-    def tx_status(self) -> Optional[Tuple[int, int, bool, int]]:
+    def tx_status(self) -> tuple[int, int, bool, int] | None:
+        """Read TX status: (freq 10kHz, power, overmod, antenna cap) or None."""
         try:
             if self._should_stop():
                 return None
-            self.buf[0] = 0x33
-            self.buf[1] = 0x00
-            if not self._write_buf(2):
-                return None
             with self.lock:
+                if not self._write_buf([0x33, 0x00]):
+                    return None
                 resp = self.bus.read_i2c_block_data(self.addr, 0, 8)
             freq_10khz = (resp[2] << 8) | resp[3]
             power_level = resp[5]
@@ -756,7 +869,7 @@ class SI4713:
             logger.error("tx_status failed: %s", exc)
             return None
 
-    def read_antenna_cap(self) -> Optional[int]:
+    def read_antenna_cap(self) -> int | None:
         """Return the last reported antenna capacitance (0-191) if available."""
         st = self.tx_status()
         if st is None:
@@ -764,41 +877,39 @@ class SI4713:
         return st[3]
 
     def is_transmitting(self) -> bool:
+        """Return True if the transmitter is producing output power."""
         st = self.tx_status()
         if st is None:
             return False
         _, pwr, _, _ = st
         return pwr > 0
 
-    def read_asq(self) -> Tuple[bool, int]:
+    def read_asq(self) -> tuple[bool, int]:
+        """Read audio signal quality: (overmod flag, input level in dBFS)."""
         try:
             if self._should_stop():
                 return False, 0
-            self.buf[0] = 0x34
-            self.buf[1] = 0x00
-            if not self._write_buf(2):
-                return False, 0
             with self.lock:
+                if not self._write_buf([0x34, 0x00]):
+                    return False, 0
                 resp = self.bus.read_i2c_block_data(self.addr, 0, 5)
-            overmod = bool(resp[1] & 0x04)
-            inlevel = resp[4] if resp[4] < 128 else resp[4] - 256
-            self.buf[0] = 0x34
-            self.buf[1] = 0x01
-            if not self._write_buf(2):
+                overmod = bool(resp[1] & 0x04)
+                inlevel = resp[4] if resp[4] < 128 else resp[4] - 256
+                # ACK the ASQ measurement
+                self._write_buf([0x34, 0x01])
                 return overmod, inlevel
-            return overmod, inlevel
         except Exception as exc:  # noqa: BLE001
             logger.error("ASQ read error: %s", exc)
             return False, 0
 
-    def read_revision(self) -> Tuple[int, int]:
+    def read_revision(self) -> tuple[int, int]:
+        """Read the chip part number and firmware revision."""
         try:
             if self._should_stop():
                 return 0, 0
-            self.buf[0] = 0x10
-            if not self._write_buf(1):
-                return 0, 0
             with self.lock:
+                if not self._write_buf([0x10]):
+                    return 0, 0
                 resp = self.bus.read_i2c_block_data(self.addr, 0, 9)
             return resp[1], resp[8]
         except Exception as exc:  # noqa: BLE001
@@ -806,11 +917,8 @@ class SI4713:
             return 0, 0
 
     def close(self) -> None:
-        try:
+        """Close the bus and release GPIO (best effort)."""
+        with suppress(Exception):
             self._close_bus()
-        except Exception:
-            pass
-        try:
+        with suppress(Exception):
             self._cleanup_gpio()
-        except Exception:
-            pass
