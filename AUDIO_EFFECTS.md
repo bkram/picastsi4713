@@ -7,18 +7,22 @@
 **Solution**: Reduce mpv output volume in `cfg/config.yaml`:
 
 ```yaml
-audio_player_cmd: mpv --volume=80  # 80% volume for loud audio without overmod
+audio_player_cmd: mpv --volume=95  # 95% volume for loud audio, occasional peaks OK
 ```
 
-**Result**: ASQ levels now stable at **-8 to -13 dBFS** with no overmod warnings.
+**Result**: ASQ levels now **-4 to -7 dBFS** with occasional brief OVERMOD peaks.
 
 **Tuning Guide**:
-- `--volume=100` = max volume (likely overmod)
-- `--volume=80` = loud, safe (current setting, -8 to -13 dBFS)
+- `--volume=100` = max volume (constant overmod)
+- `--volume=95` = very loud, occasional peaks OK (current, -4 to -7 dBFS)
+- `--volume=80` = loud, safe (-8 to -13 dBFS, no overmod)
 - `--volume=50` = moderate, very safe (-21 to -27 dBFS)
 - `--volume=30` = quiet, maximum headroom
 
-Adjust based on your audio source level. Target **-6 to -10 dBFS** for good loudness with 3-6 dB headroom.
+**Adjust based on your needs**:
+- Target **-3 to -6 dBFS** for loud audio with occasional peaks (radio volume low)
+- Target **-6 to -10 dBFS** for loud audio without overmod (radio volume normal)
+- Adjust mpv `--volume` value accordingly (95, 80, etc.)
 
 ---
 
