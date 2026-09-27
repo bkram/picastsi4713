@@ -753,6 +753,37 @@ class SI4713:
         self._last_rt_bank = bank_to_send
         return bank_to_send
 
+    def rds_send_ct(self, mjd: int, hour: int, minute: int, offset_code: int) -> bool:
+        """Send one Clock-Time group (type 4A) via the raw RDS FIFO.
+
+        mjd: Modified Julian Date (17 bits), hour/minute: UTC,
+        offset_code: RDS local-time offset (bit5=sign, bits0-4=half-hours).
+        """
+        tp = (self.misc >> 10) & 0x01
+        pty = (self.misc >> 5) & 0x1F
+        block_b = (
+            (4 << 12)  # group type 4A
+            | (0 << 11)  # version A
+            | (tp << 10)
+            | (pty << 5)
+            | ((mjd >> 15) & 0x03)
+        )
+        block_c = (((mjd >> 7) & 0xFF) << 8) | ((hour & 0x1F) << 3) | ((mjd >> 4) & 0x07)
+        block_d = ((mjd & 0x0F) << 12) | ((minute & 0x3F) << 6) | (offset_code & 0x3F)
+        with self.lock:
+            return self._write_buf(
+                [
+                    0x35,
+                    0x06,  # reset FIFO + write
+                    (block_b >> 8) & 0xFF,
+                    block_b & 0xFF,
+                    (block_c >> 8) & 0xFF,
+                    block_c & 0xFF,
+                    (block_d >> 8) & 0xFF,
+                    block_d & 0xFF,
+                ]
+            )
+
     # ---------- Status / health ----------
 
     def tx_status(self) -> Optional[Tuple[int, int, bool, int]]:

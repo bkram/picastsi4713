@@ -129,7 +129,8 @@ mpv --audio-device=help
 ## UECP mode (external RDS, experimental)
 
 UECP mode is experimental. It accepts binary UECP frames over TCP or UDP and applies only the fields
-the SI4713 supports: PI, PTY, TP, TA, MS, DI, PS, RT, and a single AF. Internal RDS updates are
+the SI4713 supports: PI, PTY, TP, TA, MS, DI, PS, RT, a single AF, and CT
+(clock/time, generated in software from the encoder's RTC). Internal RDS updates are
 ignored while UECP is enabled. The SI4713 only supports 32 chars of RT; UECP RT
 payloads are truncated to 32.
 

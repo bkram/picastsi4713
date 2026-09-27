@@ -47,10 +47,19 @@ are ignored silently.
 | `0x05` | M/S    | `rds_set_ms_music` |
 | `0x07` | PTY    | `rds_set_pty` |
 | `0x0A` | RT     | `rds_set_rt` — truncated to 32 chars (chip limit), A/B toggle bit honoured |
+| `0x0D` | RTC    | encoder clock → CT group (type 4A), re-sent when the minute changes |
 | `0x13` | AF     | `rds_set_af` (variants 0x05/0x07/0x0F, single AF code) |
+| `0x19` | CT On/Off | enable/disable transmission of the 4A groups from `0x0D` |
+| `0x1E` | RDS On/Off | `rds_enable` (RDS subcarrier on/off) |
 
-**Not supported by the SI4713** (ignored): CT (clock/time), PIN, PTYN, EON,
-TMC, RT+ / ODA, long RT (>32 chars).
+CT notes: the SI4713 has no built-in CT scheduler, so 4A groups are generated
+in software from the encoder's RTC messages — one group per minute change
+(encoders re-send RTC frequently, so this tracks the minute edge closely).
+`0x19 00` stops CT transmission; `0x19 01` resumes it and re-sends immediately.
+
+**Not implemented** (possible via the raw RDS FIFO, but not mapped yet):
+PTYN (`0x0B`), PIN (`0x06`), EON, TMC, RT+ / ODA, free-format groups.
+Long RT (>32 chars) is truncated — hardware limit.
 
 While UECP is enabled, internal RDS updates (PS/RT rotation, RT file) are
 suspended; the UECP source owns the RDS data.

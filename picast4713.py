@@ -681,6 +681,19 @@ class UecpState:
     rt: Optional[str] = None
     rt_bank: Optional[int] = None
     af_code: Optional[int] = None
+    rds_on: Optional[bool] = None
+    ct_enabled: Optional[bool] = None  # None = default (on)
+    ct_offset: int = 0
+    ct_key: Optional[Tuple[int, int, int, int]] = None  # (mjd, hour, min, offset)
+
+
+def _mjd_from_ymd(year: int, month: int, day: int) -> int:
+    """Modified Julian Date for a UTC calendar date (days since 1858-11-17)."""
+    a = (14 - month) // 12
+    y = year + 4800 - a
+    m = month + 12 * a - 3
+    jdn = day + (153 * m + 2) // 5 + 365 * y + y // 4 - y // 100 + y // 400 - 32045
+    return jdn - 2400001
 
 
 class UecpBridge:
@@ -930,11 +943,13 @@ class UecpBridge:
                         flags[3],
                     )
                 self._last_payloads[mec] = data
-            elif mec == 0x02 and payload:
+            elif mec == 0x02:
+                # PS: data is the 8 PS chars (DSN/PSN are group[1]/group[2]);
+                # some encoders repeat DSN/PSN inside data (len >= 10).
                 if len(data) >= 10:
-                    ps_bytes = data[2:10]
+                    ps_bytes = bytes(data[2:10])
                 else:
-                    ps_bytes = payload[:8]
+                    ps_bytes = bytes(data[:8])
                 if len(ps_bytes) < 8:
                     return
                 ps = ps_bytes.decode("ascii", "replace")
@@ -949,13 +964,10 @@ class UecpBridge:
                         self._status_bus.update_ps_current(ps.strip())
                     logger.info("UECP PS set: %r", ps)
                 self._last_payloads[mec] = data
-            elif mec == 0x0A and len(data) >= 3:
-                med: bytes
-                if len(data) >= 3 and data[2] <= len(data) - 3:
-                    mel = data[2]
-                    med = bytes(data[3 : 3 + mel])
-                else:
-                    med = payload
+            elif mec == 0x0A and len(data) >= 2:
+                # RT: MED = MEL(1) + control(1) + text (MEL covers control+text)
+                mel = data[0]
+                med = bytes(data[1 : 1 + min(mel, len(data) - 1)])
                 if not med:
                     return
                 control = med[0]
@@ -981,16 +993,80 @@ class UecpBridge:
                         self._status_bus.update_rt(rt_text, bank)
                     logger.info("UECP RT set (bank %d): %r", bank, rt_text)
                 self._last_payloads[mec] = data
-            elif mec == 0x13 and payload:
+            elif mec == 0x13 and len(data) >= 5:
                 af_code: Optional[int] = None
-                variant = payload[0]
-                if variant in (0x05, 0x07, 0x0F) and len(payload) >= 5:
-                    af_code = int(payload[4])
+                variant = data[0]
+                if variant in (0x05, 0x07, 0x0F):
+                    af_code = int(data[4])
                 if af_code is not None and af_code != self._state.af_code:
                     self._tx.rds_set_af(af_code)
                     self._state.af_code = af_code
                     logger.info("UECP AF set: code=%d", af_code)
                 self._last_payloads[mec] = data
+            elif mec == 0x0D:
+                # Real time clock -> RDS CT (4A). No DSN/PSN: 8 MED bytes.
+                self._handle_rtc(group[1:9])
+                self._last_payloads[mec] = data
+            elif mec == 0x19 and len(group) >= 2:
+                self._handle_ct_onoff(group[1])
+                self._last_payloads[mec] = data
+            elif mec == 0x1E and len(group) >= 2:
+                self._handle_rds_onoff(group[1])
+                self._last_payloads[mec] = data
+
+    def _handle_rtc(self, med: bytes) -> None:
+        """MEC 0x0D: encoder real-time clock -> transmit CT group (4A).
+
+        MED: year, month, date, hour, minute, second, centisecond, offset.
+        CT is re-sent only when the minute changes (encoders re-send RTC
+        frequently; the offset byte 0xFF keeps the previous offset).
+        """
+        if len(med) < 8:
+            return
+        year = 2000 + med[0]
+        month, day, hour, minute = med[1], med[2], med[3], med[4]
+        if not (1 <= month <= 12 and 1 <= day <= 31 and hour <= 23 and minute <= 59):
+            return
+        if med[7] != 0xFF:
+            self._state.ct_offset = med[7] & 0x3F
+        offset_code = self._state.ct_offset
+        mjd = _mjd_from_ymd(year, month, day)
+        key = (mjd, hour, minute, offset_code)
+        if key == self._state.ct_key:
+            return
+        self._state.ct_key = key
+        if self._state.ct_enabled is False:
+            return
+        if self._tx.rds_send_ct(mjd, hour, minute, offset_code):
+            logger.info(
+                "UECP CT sent: %04d-%02d-%02d %02d:%02d UTC (offset 0x%02X)",
+                year,
+                month,
+                day,
+                hour,
+                minute,
+                offset_code,
+            )
+
+    def _handle_ct_onoff(self, med: int) -> None:
+        """MEC 0x19: enable/disable CT (type 4A) transmission."""
+        enabled = bool(med & 0x01)
+        if self._state.ct_enabled == enabled:
+            return
+        self._state.ct_enabled = enabled
+        logger.info("UECP CT %s", "enabled" if enabled else "disabled")
+        if enabled and self._state.ct_key is not None:
+            mjd, hour, minute, offset_code = self._state.ct_key
+            self._tx.rds_send_ct(mjd, hour, minute, offset_code)
+
+    def _handle_rds_onoff(self, med: int) -> None:
+        """MEC 0x1E: switch the RDS subcarrier on/off."""
+        on = bool(med & 0x01)
+        if self._state.rds_on == on:
+            return
+        self._state.rds_on = on
+        self._tx.rds_enable(on)
+        logger.info("UECP RDS %s", "on" if on else "off")
 
 
 # ---------------------------------------------------------------------
