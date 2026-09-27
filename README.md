@@ -8,6 +8,8 @@ external RDS input.
 
 - 📡 FM transmit control: frequency, power, antenna capacitor (manual or auto)
 - 🎵 RDS: PI/PTY/TP/TA/MS/DI, PS rotation, RT rotation, RT file override, single AF
+- 🏷️ RT+ (RadioText Plus): tag title/artist etc. in RT for modern receivers
+- 🕐 CT (clock/time) in UECP mode; PTYN/PIN/free-format groups via raw RDS FIFO
 - 🌐 UECP input (TCP/UDP) for external RDS sources
 - 🔄 Hot reload: apply config diffs without restarting
 - 🛡️ Health monitoring with recovery attempts and ASQ logging (while TX is on)
@@ -106,6 +108,30 @@ Notes:
   (IEC 62106 Annex E). Diacritics (é, ä, ñ, ü, …) and symbols (€, £, $, °, §)
   are supported; unmappable characters fall back to their base letter or a space.
 - When `uecp.enabled` is true, `rds.enabled` is forced on.
+
+RT+ (RadioText Plus) tags elements inside the RT for modern receivers
+(title, artist, …). Configure up to two tags under `rds.rt.plus`:
+
+```json
+"rt": {
+  "texts": ["House of the Rising Sun - The Animals"],
+  "plus": {
+    "enabled": true,
+    "app_group": 12,
+    "tags": [
+      { "type": "item.title", "start": 0, "length": 23 },
+      { "type": "item.artist", "start": 24, "length": 11 }
+    ]
+  }
+}
+```
+
+- `type`: content-type name (`item.title`, `item.artist`, `info.url`,
+  `stationname.long`, …) or class number 0-63.
+- `start`/`length`: character position/length inside the 32-char RT.
+- Tags are re-sent (3A identification + tag group) with every new RT; the item
+  toggle bit flips per message. Note: `start`/`length` are fixed per config —
+  keep them valid for your RT texts.
 
 Audio stream playback is configured per station in JSON and globally in the
 adapter config. Example per-station block:

@@ -792,6 +792,44 @@ class SI4713:
                 ]
             )
 
+    def rds_send_rtplus_3a(self, app_group_type: int) -> bool:
+        """Send the RT+ ODA identification group (type 3A, AID 0x4BD7).
+
+        app_group_type: group type number (1-15) that carries the RT+ tags.
+        """
+        return self.rds_send_group(
+            3, (app_group_type & 0xF) << 1, 0x0000, 0x4BD7
+        )
+
+    def rds_send_rtplus_tags(
+        self,
+        app_group_type: int,
+        item_toggle: int,
+        item_running: int,
+        tags: List[Tuple[int, int, int]],
+    ) -> bool:
+        """Send one RT+ tag group (IEC 62106-6 annex A).
+
+        tags: up to 2 tuples of (content_type 0-63, start 0-63, length 1-63).
+        Block B: bit4=item toggle, bit3=item running, bits2-0=content type 1
+        top bits. Tags are packed across blocks C and D.
+        """
+        ct1, st1, ln1 = tags[0] if len(tags) > 0 else (0, 0, 1)
+        ct2, st2, ln2 = tags[1] if len(tags) > 1 else (0, 0, 1)
+        block2_low = (
+            ((item_toggle & 0x01) << 4)
+            | ((item_running & 0x01) << 3)
+            | ((ct1 >> 3) & 0x07)
+        )
+        block3 = (
+            ((ct1 & 0x07) << 13)
+            | ((st1 & 0x3F) << 7)
+            | (((ln1 - 1) & 0x3F) << 1)
+            | ((ct2 >> 5) & 0x01)
+        )
+        block4 = ((ct2 & 0x1F) << 11) | ((st2 & 0x3F) << 5) | ((ln2 - 1) & 0x1F)
+        return self.rds_send_group(app_group_type, block2_low, block3, block4)
+
     def rds_send_ct(self, mjd: int, hour: int, minute: int, offset_code: int) -> bool:
         """Send one Clock-Time group (type 4A) via the raw RDS FIFO.
 

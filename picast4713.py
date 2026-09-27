@@ -326,6 +326,9 @@ class AppConfig:
     rds_rt_repeats: int
     rds_rt_gap_ms: int
     rds_rt_bank: Optional[int]  # used only when ab_mode='bank'
+    rds_rt_plus_enabled: bool
+    rds_rt_plus_app_group: int
+    rds_rt_plus_tags: List[Tuple[int, int, int]]
 
     # Monitor
     monitor_health: bool
@@ -453,6 +456,18 @@ class AppConfig:
         bank_val = rt_cfg.get("bank", None)
         self.rds_rt_bank = (int(bank_val) & 1) if bank_val is not None else None
 
+        # RT+ (RadioText Plus ODA, IEC 62106-6 annex A)
+        plus_cfg = rt_cfg.get("plus", {})
+        if not isinstance(plus_cfg, dict):
+            plus_cfg = {}
+        self.rds_rt_plus_enabled = _parse_bool(plus_cfg.get("enabled", False), False)
+        app_group = _parse_int(plus_cfg.get("app_group", 12), 12)
+        self.rds_rt_plus_app_group = app_group if 1 <= app_group <= 15 else 12
+        self.rds_rt_plus_tags = _parse_rtplus_tags(plus_cfg.get("tags", []))
+        if self.rds_rt_plus_enabled and not self.rds_rt_plus_tags:
+            logger.warning("rds.rt.plus enabled but no valid tags; RT+ disabled")
+            self.rds_rt_plus_enabled = False
+
         # Monitor
         self.monitor_health = _parse_bool(monitor.get("health", True), True)
         self.monitor_asq = _parse_bool(monitor.get("asq", True), True)
@@ -569,6 +584,7 @@ def _burst_rt(
     gap_ms: int,
     bank: Optional[int],
     status_bus: Optional["StatusBus"] = None,
+    cfg: Optional["AppConfig"] = None,
 ) -> None:
     """Send RT bursts with A/B handling and status updates."""
     tx.set_rt_ab_mode(ab_mode)
@@ -589,6 +605,8 @@ def _burst_rt(
             bank=bank if ab_mode == "bank" else None,
             cr_terminate=center,
         )
+    if cfg is not None:
+        _send_rt_plus(tx, cfg)
 
 
 def _crc16_ccitt(data: bytes, poly: int = 0x1021, init: int = 0xFFFF) -> int:
@@ -1053,12 +1071,16 @@ class UecpBridge:
             logger.info("UECP PTYN set: %r", _rds_decode(chars))
 
     def _handle_pin(self, data: bytes) -> None:
-        """MEC 0x06: Programme Item Number -> type 1A group (block C = PIN)."""
+        """MEC 0x06: Programme Item Number -> type 1A group.
+
+        EN 50067 fig. 15/note 3: PIN (day/hour/minute) goes in block 4;
+        block 3 (slow labelling) is zeroed (variant 0, no paging).
+        """
         pin = (int(data[0]) << 8) | int(data[1])
         if pin == self._state.pin:
             return
         self._state.pin = pin
-        if self._tx.rds_send_group(1, 0, pin, 0x0000):
+        if self._tx.rds_send_group(1, 0, 0x0000, pin):
             day = (pin >> 11) & 0x1F
             hour = (pin >> 6) & 0x1F
             minute = pin & 0x3F
@@ -1137,6 +1159,87 @@ class UecpBridge:
         self._state.rds_on = on
         self._tx.rds_enable(on)
         logger.info("UECP RDS %s", "on" if on else "off")
+
+
+# ---------------------------------------------------------------------
+# RT+ (RadioText Plus, IEC 62106-6 annex A)
+# ---------------------------------------------------------------------
+
+_RTPLUS_CONTENT_TYPES: List[str] = [
+    "dummy_class", "item.title", "item.album",
+    "item.tracknumber", "item.artist", "item.composition",
+    "item.movement", "item.conductor", "item.composer",
+    "item.band", "item.comment", "item.genre",
+    "info.news", "info.news.local", "info.stockmarket",
+    "info.sport", "info.lottery", "info.horoscope",
+    "info.daily_diversion", "info.health", "info.event",
+    "info.scene", "info.cinema", "info.tv",
+    "info.date_time", "info.weather", "info.traffic",
+    "info.alarm", "info.advertisement", "info.url",
+    "info.other", "stationname.short", "stationname.long",
+    "programme.now", "programme.next", "programme.part",
+    "programme.host", "programme.editorial_staff", "programme.frequency",
+    "programme.homepage", "programme.subchannel", "phone.hotline",
+    "phone.studio", "phone.other", "sms.studio",
+    "sms.other", "email.hotline", "email.studio",
+    "email.other", "mms.other", "chat",
+    "chat.centre", "vote.question", "vote.centre",
+    "unknown", "unknown", "unknown",
+    "place", "appointment", "identifier", "purchase", "get_data",
+]
+_RTPLUS_TYPE_CODES: Dict[str, int] = {
+    name: idx for idx, name in enumerate(_RTPLUS_CONTENT_TYPES)
+}
+
+
+def _parse_rtplus_tags(value: Any) -> List[Tuple[int, int, int]]:
+    """Parse up to 2 RT+ tags: [{type, start, length}, ...].
+
+    type: content-type name (e.g. 'item.artist') or class number 0-63.
+    start: 0-63, length: 1-63 characters.
+    """
+    tags: List[Tuple[int, int, int]] = []
+    if not isinstance(value, list):
+        return tags
+    for item in value[:2]:
+        if not isinstance(item, dict):
+            continue
+        raw_type = item.get("type", item.get("content_type", 0))
+        if isinstance(raw_type, str):
+            ct = _RTPLUS_TYPE_CODES.get(raw_type.strip().lower())
+            if ct is None:
+                logger.warning("Unknown RT+ content type %r; skipped", raw_type)
+                continue
+        else:
+            ct = max(0, min(63, _parse_int(raw_type, 0)))
+        start = max(0, min(63, _parse_int(item.get("start", 0), 0)))
+        length = max(1, min(63, _parse_int(item.get("length", 1), 1)))
+        tags.append((ct, start, length))
+    return tags
+
+
+def _send_rt_plus(tx: SI4713, cfg: "AppConfig") -> None:
+    """Send the RT+ 3A identification and the tag group for the current RT.
+
+    The item toggle bit flips on every new message (each burst is a new text).
+    """
+    if not cfg.rds_rt_plus_enabled or not cfg.rds_rt_plus_tags:
+        return
+    toggle = (getattr(tx, "_rtplus_toggle", 0) ^ 1) & 1
+    tx._rtplus_toggle = toggle  # type: ignore[attr-defined]
+    if tx.rds_send_rtplus_3a(cfg.rds_rt_plus_app_group):
+        tx.rds_send_rtplus_tags(
+            cfg.rds_rt_plus_app_group, toggle, 1, cfg.rds_rt_plus_tags
+        )
+        logger.info(
+            "RT+ sent (group %dA, toggle=%d): %s",
+            cfg.rds_rt_plus_app_group,
+            toggle,
+            [
+                (_RTPLUS_CONTENT_TYPES[ct], st, ln)
+                for ct, st, ln in cfg.rds_rt_plus_tags
+            ],
+        )
 
 
 # ---------------------------------------------------------------------
@@ -1251,6 +1354,7 @@ def apply_config(
         gap_ms=cfg.rds_rt_gap_ms,
         bank=cfg.rds_rt_bank,
         status_bus=status_bus,
+        cfg=cfg,
     )
     next_rotate_at = time.monotonic() + max(0.5, cfg.rds_rt_speed_s)
 
@@ -2208,6 +2312,7 @@ def main() -> None:
                                     gap_ms=cfg.rds_rt_gap_ms,
                                     bank=rt_bank,
                                     status_bus=status_bus,
+                                    cfg=cfg,
                                 )
                                 if status_bus is not None:
                                     status_bus.update_ps(cfg.rds_ps)
@@ -2389,6 +2494,7 @@ def main() -> None:
                                     gap_ms=cfg.rds_rt_gap_ms,
                                     bank=cfg.rds_rt_bank,
                                     status_bus=status_bus,
+                                    cfg=cfg,
                                 )
                                 logger.info(
                                     "RT applied on config reload: %s -> %s: %r",
@@ -2424,6 +2530,7 @@ def main() -> None:
                                 gap_ms=cfg.rds_rt_gap_ms,
                                 bank=cfg.rds_rt_bank,
                                 status_bus=status_bus,
+                                cfg=cfg,
                             )
                         logger.info("RT source switch: %s -> file", rt_source)
                         rt_source = "file"
@@ -2441,6 +2548,7 @@ def main() -> None:
                                 gap_ms=cfg.rds_rt_gap_ms,
                                 bank=cfg.rds_rt_bank,
                                 status_bus=status_bus,
+                                cfg=cfg,
                             )
                             new_src = (
                                 f"list[{rot_idx}]" if cfg.rds_rt_texts else "fallback"
@@ -2462,6 +2570,7 @@ def main() -> None:
                             gap_ms=cfg.rds_rt_gap_ms,
                             bank=cfg.rds_rt_bank,
                             status_bus=status_bus,
+                            cfg=cfg,
                         )
                         new_src = f"list[{rot_idx}]" if cfg.rds_rt_texts else "fallback"
                         logger.info("RT source switch: file -> %s", new_src)
@@ -2491,6 +2600,7 @@ def main() -> None:
                         gap_ms=cfg.rds_rt_gap_ms,
                         bank=cfg.rds_rt_bank,
                         status_bus=status_bus,
+                        cfg=cfg,
                     )
                     logger.info("RT rotate -> list[%d]: %r", rot_idx, candidate)
                     rt_source = f"list[{rot_idx}]"
