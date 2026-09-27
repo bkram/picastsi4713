@@ -102,6 +102,9 @@ Notes:
 - `rds.deviation_hz` is in 10 Hz units (e.g., 200 = 2.00 kHz).
 - RT file override: set `rds.rt.file_path`; it overrides the RT list when present.
 - Macros: `{time}`, `{date}`, `{datetime}`, `{config}`, `{freq}`, `{power}` in PS/RT texts.
+- Text encoding: configs are UTF-8; texts are mapped to the RDS character set
+  (IEC 62106 Annex E). Diacritics (é, ä, ñ, ü, …) and symbols (€, £, $, °, §)
+  are supported; unmappable characters fall back to their base letter or a space.
 - When `uecp.enabled` is true, `rds.enabled` is forced on.
 
 Audio stream playback is configured per station in JSON and globally in the

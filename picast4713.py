@@ -25,6 +25,7 @@ from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 
 from si4713 import SI4713
+from si4713.charset import decode as _rds_decode
 
 if TYPE_CHECKING:
     from web import LogBus, StatusBus
@@ -955,7 +956,7 @@ class UecpBridge:
                     ps_bytes = bytes(data[:8])
                 if len(ps_bytes) < 8:
                     return
-                ps = ps_bytes.decode("ascii", "replace")
+                ps = _rds_decode(ps_bytes)
                 if ps != self._state.ps:
                     self._tx.rds_set_ps(ps, 0)
                     if not self._state.pscount_set:
@@ -980,7 +981,7 @@ class UecpBridge:
                 if cr_idx != -1:
                     raw = raw[:cr_idx]
                     add_cr = True
-                rt_text = raw.decode("latin-1", "replace")
+                rt_text = _rds_decode(raw)
                 rt_text = rt_text[:32].rstrip()
                 bank = self._state.rt_bank or 0
                 if control & 0x01:
@@ -1049,7 +1050,7 @@ class UecpBridge:
                 and ok
             )
         if ok:
-            logger.info("UECP PTYN set: %r", chars.decode("latin-1", "replace"))
+            logger.info("UECP PTYN set: %r", _rds_decode(chars))
 
     def _handle_pin(self, data: bytes) -> None:
         """MEC 0x06: Programme Item Number -> type 1A group (block C = PIN)."""

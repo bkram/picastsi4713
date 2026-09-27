@@ -60,6 +60,15 @@ in software from the encoder's RTC messages — one group per minute change
 (encoders re-send RTC frequently, so this tracks the minute edge closely).
 `0x19 00` stops CT transmission; `0x19 01` resumes it and re-sends immediately.
 
+## Character set
+
+On-air text uses the fixed 8-bit RDS repertoire (IEC 62106 Annex E, table E.1)
+— true UTF-8 over classic RDS does not exist (eRT/RDS2 solve this but are not
+SI4713-doable / have near-zero receiver support). Incoming UECP text bytes are
+treated as RDS codes and decoded to Unicode for display; locally configured
+texts (UTF-8 JSON) are mapped to the RDS repertoire with diacritic/symbol
+support and base-letter/space fallbacks.
+
 **Not implemented**: EON (`0x14`), TMC (`0x1B`), TDC (`0x0C`), EWS (`0x08`),
 IH (`0x20`), slow labeling (`0x1A`), linkage info (`0x2E`), ODA commands.
 Note that EWS/TDC/IH/TMC and ODAs can already be aired by the sender using

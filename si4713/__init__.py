@@ -25,6 +25,8 @@ except Exception:  # noqa: BLE001
 
 logger = logging.getLogger(__name__)
 
+from .charset import encode as _rds_encode  # noqa: E402
+
 I2C_ADDRESS: int = 0x63
 I2C_BUS: int = 1
 
@@ -645,8 +647,8 @@ class SI4713:
         group = slot * 2
 
         with self.lock:
-            self._write_buf([0x36, group] + [ord(c) for c in arr[0:4]])
-            self._write_buf([0x36, group + 1] + [ord(c) for c in arr[4:8]])
+            self._write_buf([0x36, group] + _rds_encode("".join(arr[0:4])))
+            self._write_buf([0x36, group + 1] + _rds_encode("".join(arr[4:8])))
         self._last_ps[slot] = text
 
     def rds_set_pscount(self, count: int, speed: int) -> None:
@@ -694,7 +696,7 @@ class SI4713:
             if ln == 0 or arr[ln - 1] != "\r":
                 arr[ln] = "\r"
 
-        payload = "".join(arr).encode("latin-1", "replace")
+        payload = bytes(_rds_encode("".join(arr)))
 
         # ---- Decide bank per mode
         mode = self._rt_ab_mode
@@ -741,10 +743,10 @@ class SI4713:
                     0x06 if seg == 0 else 0x04,
                     (block_b >> 8) & 0xFF,
                     block_b & 0xFF,
-                    ord(arr[idx]),
-                    ord(arr[idx + 1]),
-                    ord(arr[idx + 2]),
-                    ord(arr[idx + 3]),
+                    payload[idx],
+                    payload[idx + 1],
+                    payload[idx + 2],
+                    payload[idx + 3],
                 ]
                 self._write_buf(cmd)
                 idx += 4
