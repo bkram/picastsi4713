@@ -68,10 +68,8 @@ instance/
 # Scrapy stuff:
 .scrapy
 
-# Sphinx documentation (local reference material stays untracked,
-# but keep docs/uecp.md versioned since the README links to it)
-docs/*
-!docs/uecp.md
+# Sphinx documentation (local reference material stays untracked)
+docs/
 
 # PyBuilder
 .pybuilder/

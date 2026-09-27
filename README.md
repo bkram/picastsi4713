@@ -178,7 +178,7 @@ port.
 Use any UECP-capable encoder (for example, a broadcast processor that emits
 UECP frames). Configure it to send TCP or UDP to the host/port above.
 
-See [docs/uecp.md](docs/uecp.md) for the full protocol reference: supported
+See [uecp.md](uecp.md) for the full protocol reference: supported
 MECs, wire format, address filtering, testing with the included `docs/rdsd.py`
 UECP sender, and troubleshooting.
 

@@ -14,7 +14,8 @@ unions and builtin generics in annotations are fine and preferred).
 | `web/__init__.py` | Flask API + status buses (`StatusBus`, `LogBus`) |
 | `web/static/` | Web UI assets (no Python) |
 | `cfg/` | Station configs (`*.json`), adapter config (`config.yaml`, gitignored), `state.json` (gitignored) |
-| `docs/` | Project docs + reference tools (`rdsd.py`, `uecprds/`), captures (mostly gitignored; `docs/uecp.md` is tracked) |
+| `docs/` | Project docs + reference tools (`rdsd.py`, `uecprds/`), captures (gitignored) |
+| `uecp.md` | UECP protocol reference (linked from README) |
 | `standards/` | Normative specs (EN 50067, IEC 62106, SPB 490) — PDFs not tracked |
 
 ## Toolchain (ruff)
@@ -101,5 +102,5 @@ framing — run it after ANY change to `UecpBridge`.
 
 - Work happens on the `fixes` branch; small focused commits with a body
   explaining the *why* (see `git log` for style).
-- `cfg/config.yaml`, `cfg/state.json`, `docs/` (except `docs/uecp.md`) and
+- `cfg/config.yaml`, `cfg/state.json`, `docs/` and
   `standards/*.pdf` are gitignored — do not force-add them.
