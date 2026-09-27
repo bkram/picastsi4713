@@ -332,6 +332,7 @@ class SI4713:
 
         self.lock: threading.Lock = threading.Lock()
         self.buf: List[int] = [0] * 10
+        self._stop_event: Optional[threading.Event] = None
 
         self.component: int = 0
         self.acomp: int = 0
@@ -381,6 +382,19 @@ class SI4713:
             with self.lock:
                 self.bus.write_i2c_block_data(self.addr, 0x01, [0x12, 0x50])
 
+            # Wait for CTS after POWER_UP before sending further commands
+            # (datasheet: can take up to 500 ms with crystal startup).
+            with self.lock:
+                for _ in range(100):
+                    if self._should_stop():
+                        return False
+                    if self.bus.read_byte(self.addr) & 0x80:
+                        break
+                    time.sleep(0.005)
+                else:
+                    logger.error("No CTS after POWER_UP")
+                    return False
+
             self.buf[0] = 0x80
             self.buf[1] = 0x0E
             if not self._write_buf(2):
@@ -422,8 +436,11 @@ class SI4713:
                         if status & 0x80:
                             return True
                         time.sleep(0.002)
-                    logger.error("CTS timeout after write")
-                    return False
+                    logger.warning(
+                        "CTS timeout after write (attempt %d/%d)", attempt, retries
+                    )
+                    time.sleep(0.01 * attempt)
+                    continue
             except Exception as exc:  # noqa: BLE001
                 if self._should_stop():
                     return False

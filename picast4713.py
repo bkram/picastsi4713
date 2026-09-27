@@ -431,7 +431,7 @@ class AppConfig:
         self.rds_rt_texts = [
             t for t in _list_of_str(rt_cfg.get("texts", [])) if t.strip()
         ]
-        self.rds_rt_speed_s = float(rt_cfg.get("speed_s", 10.0))
+        self.rds_rt_speed_s = _parse_float(rt_cfg.get("speed_s", 10.0), 10.0) or 10.0
         self.rds_rt_center = _parse_bool(rt_cfg.get("center", True), True)
         file_path = _parse_str(rt_cfg.get("file_path", ""), "")
         self.rds_rt_file = file_path if file_path.strip() else None
@@ -457,7 +457,9 @@ class AppConfig:
         interval_val = _parse_float(raw_interval, 1.0)
         self.health_interval_s = float(interval_val if interval_val is not None else 1.0)
         self.recovery_attempts = _parse_int(monitor.get("recovery_attempts", 3), 3)
-        self.recovery_backoff_s = float(monitor.get("recovery_backoff_s", 0.5))
+        self.recovery_backoff_s = (
+            _parse_float(monitor.get("recovery_backoff_s", 0.5), 0.5) or 0.5
+        )
         _missing = object()
         raw_ignore = monitor.get("overmod_ignore_below_dbfs", _missing)
         # Default to -5 dBFS when not provided; explicit null disables.
@@ -1940,6 +1942,8 @@ def main() -> None:
                         next_rt_file_poll = now + rt_file_poll_s
                     except Exception as exc:  # noqa: BLE001
                         logger.error("Failed to switch config %s: %s", pending_cfg, exc)
+                        # Revert the requested path so we don't retry every loop
+                        status_bus.set_config_path(cfg_path)
 
             # Config reload requested via API (diff-only apply)
             if status_bus is not None and status_bus.pop_pending_reload():
@@ -2081,7 +2085,7 @@ def main() -> None:
                 else:
                     health_failures = 0
 
-                if cfg.monitor_asq:
+                if cfg.monitor_asq and tx_state is not None and tx_state.enabled:
                     overmod, inlvl = tx.read_asq()
                     if (
                         overmod

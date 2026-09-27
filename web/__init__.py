@@ -309,7 +309,9 @@ def _update_state_file(state_path: Optional[str], **kwargs: object) -> None:
         else:
             data = {}
         data.update(kwargs)
-        os.makedirs(os.path.dirname(state_path), exist_ok=True)
+        dir_name = os.path.dirname(state_path)
+        if dir_name:
+            os.makedirs(dir_name, exist_ok=True)
         with open(state_path, "w", encoding="utf-8") as fh:
             json.dump(data, fh, indent=2, sort_keys=True)
     except Exception as exc:
